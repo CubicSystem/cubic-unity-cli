@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using Newtonsoft.Json.Linq;
@@ -43,6 +44,7 @@ namespace Cubix.UnityCli
         public string expectedCliVersion;
         public string cliVersion;
         public string cliCommandVersion;
+        public string cliCommandLocation;
         public string cliCommandCheckMessage;
         public string diagnostics;
     }
@@ -80,10 +82,11 @@ namespace Cubix.UnityCli
             status.pipxVersion = pipxVersion;
             diagnostics.AppendLine("pipx: " + (status.pipxAvailable ? pipxVersion : "missing"));
 
+            string cliPackageAppPath = null;
             if (status.pipxAvailable)
             {
                 var listResult = Run(pipxCommand, "list --json");
-                if (listResult.Success && TryParseCliVersion(listResult.StdOut, out var cliVersion))
+                if (listResult.Success && TryReadCliPackageInfo(listResult.StdOut, out var cliVersion, out cliPackageAppPath))
                 {
                     status.cliInstalled = true;
                     status.cliVersion = cliVersion;
@@ -91,10 +94,11 @@ namespace Cubix.UnityCli
                 }
             }
 
-            if (TryResolveCliCommand(out var cliCommand, out var cliCommandVersion, out var cliCommandCheckMessage))
+            if (TryResolveCliCommand(cliPackageAppPath, out var cliCommand, out var cliCommandVersion, out var cliCommandCheckMessage))
             {
                 status.cliCommandAvailable = true;
                 status.cliCommandVersion = cliCommandVersion;
+                status.cliCommandLocation = cliCommand.FileName;
                 status.cliCommandVersionMatches = VersionsMatch(cliCommandVersion, status.expectedCliVersion);
 
                 var testParserCheck = Run(cliCommand, "test status --help");
@@ -114,6 +118,7 @@ namespace Cubix.UnityCli
             diagnostics.AppendLine("Package matches payload: " + (status.cliVersionMatches ? "yes" : "no"));
             diagnostics.AppendLine("cubix-cli command: " + (status.cliCommandAvailable ? status.cliCommandVersion ?? "available" : "missing"));
             diagnostics.AppendLine("Command matches payload: " + (status.cliCommandVersionMatches ? "yes" : "no"));
+            diagnostics.AppendLine("Command path: " + (status.cliCommandAvailable ? status.cliCommandLocation ?? "-" : "missing"));
             diagnostics.AppendLine("Top-level test parser: " + (status.cliSupportsTestTopLevel ? "supported" : "missing"));
             if (!string.IsNullOrWhiteSpace(status.cliCommandCheckMessage))
             {
@@ -298,9 +303,10 @@ namespace Cubix.UnityCli
             return false;
         }
 
-        private static bool TryParseCliVersion(string json, out string version)
+        private static bool TryReadCliPackageInfo(string json, out string version, out string appPath)
         {
             version = null;
+            appPath = null;
             if (string.IsNullOrWhiteSpace(json))
             {
                 return false;
@@ -318,6 +324,8 @@ namespace Cubix.UnityCli
                 version = package["metadata"]?["main_package"]?["package_version"]?.Value<string>()
                     ?? package["metadata"]?["main_package"]?["package_or_url"]?.Value<string>()
                     ?? "installed";
+                appPath = package["metadata"]?["main_package"]?["app_paths"]?[0]?["__Path__"]?.Value<string>()
+                    ?? package["metadata"]?["main_package"]?["app_paths"]?[0]?.Value<string>();
                 return true;
             }
             catch
@@ -326,25 +334,65 @@ namespace Cubix.UnityCli
             }
         }
 
-        private static bool TryResolveCliCommand(out CommandSpec cliCommand, out string version, out string message)
+        private static bool TryResolveCliCommand(string preferredPath, out CommandSpec cliCommand, out string version, out string message)
         {
-            cliCommand = new CommandSpec
+            var candidates = new List<CommandSpec>();
+            AddCommandCandidate(candidates, preferredPath);
+
+            var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            AddCommandCandidate(candidates, Path.Combine(userProfile, ".local", "bin", "cubix-cli.exe"));
+            AddCommandCandidate(candidates, Path.Combine(userProfile, "pipx", "venvs", CliPackageName, "Scripts", "cubix-cli.exe"));
+            candidates.Add(new CommandSpec
             {
                 FileName = "cubix-cli",
                 PrefixArguments = string.Empty
-            };
+            });
 
-            var result = Run(cliCommand, "--version");
-            message = FirstMeaningfulLine(result.StdOut, result.StdErr);
-            if (!result.Success)
+            message = null;
+            foreach (var candidate in candidates)
             {
-                version = null;
-                cliCommand = null;
-                return false;
+                var result = Run(candidate, "--version");
+                message = FirstMeaningfulLine(result.StdOut, result.StdErr, message);
+                if (!result.Success)
+                {
+                    continue;
+                }
+
+                cliCommand = candidate;
+                version = ParseCliCommandVersion(result.StdOut, result.StdErr);
+                return true;
             }
 
-            version = ParseCliCommandVersion(result.StdOut, result.StdErr);
-            return true;
+            version = null;
+            cliCommand = null;
+            return false;
+        }
+
+        private static void AddCommandCandidate(List<CommandSpec> candidates, string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                return;
+            }
+
+            if (Path.IsPathRooted(fileName) && !File.Exists(fileName))
+            {
+                return;
+            }
+
+            foreach (var candidate in candidates)
+            {
+                if (string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+
+            candidates.Add(new CommandSpec
+            {
+                FileName = fileName,
+                PrefixArguments = string.Empty
+            });
         }
 
         private static string ParseCliCommandVersion(params string[] outputs)
