@@ -104,7 +104,15 @@ namespace Cubix.UnityCli
                 }
                 else if (context.Request.HttpMethod == "GET" && context.Request.Url.AbsolutePath == "/status")
                 {
-                    payload = new CommandSuccessResponse("Status", HeartbeatService.BuildStatusSnapshot());
+                    if (HeartbeatService.TryGetCachedStatusSnapshot(out var snapshot))
+                    {
+                        payload = new CommandSuccessResponse("Status", snapshot);
+                    }
+                    else
+                    {
+                        statusCode = 503;
+                        payload = new CommandErrorResponse("Status snapshot is not available yet.");
+                    }
                 }
                 else if (context.Request.HttpMethod == "POST" && context.Request.Url.AbsolutePath == "/command")
                 {

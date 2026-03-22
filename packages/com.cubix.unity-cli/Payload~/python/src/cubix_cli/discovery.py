@@ -12,6 +12,9 @@ class DiscoveryError(RuntimeError):
     """Raised when no Unity instance can be selected."""
 
 
+ACTIVE_INSTANCE_MAX_AGE_SECONDS = 15.0
+
+
 @dataclass(frozen=True)
 class InstanceInfo:
     project_name: str
@@ -72,37 +75,64 @@ def load_instances() -> List[InstanceInfo]:
 def rank_instances(instances: Iterable[InstanceInfo], cwd: Path, project: Optional[str]) -> List[InstanceInfo]:
     project_path = Path(project).resolve() if project else None
 
-    def score(instance: InstanceInfo) -> tuple[int, int, float]:
-        instance_path = Path(instance.project_path)
+    return sorted(instances, key=lambda instance: score_instance(instance, cwd, project_path))
+
+
+def score_instance(instance: InstanceInfo, cwd: Path, project_path: Optional[Path]) -> tuple[int, int, float]:
+    instance_path = Path(instance.project_path)
+    explicit = 0
+    proximity = 0
+
+    if project_path and instance_path == project_path:
         explicit = 0
-        proximity = 0
+    elif project_path:
+        explicit = 1
+    elif cwd == instance_path or instance_path in cwd.parents:
+        explicit = 0
+        proximity = len(instance_path.parts)
+    else:
+        explicit = 2
 
-        if project_path and instance_path == project_path:
-            explicit = 0
-        elif project_path:
-            explicit = 1
-        elif cwd == instance_path or instance_path in cwd.parents:
-            explicit = 0
-            proximity = len(instance_path.parts)
-        else:
-            explicit = 2
-
-        return (explicit, -proximity, -instance.updated_at.timestamp())
-
-    return sorted(instances, key=score)
+    return (explicit, -proximity, -instance.updated_at.timestamp())
 
 
-def resolve_instance(cwd: Optional[str] = None, project: Optional[str] = None) -> InstanceInfo:
+def is_active_instance(instance: InstanceInfo, max_age_seconds: float = ACTIVE_INSTANCE_MAX_AGE_SECONDS) -> bool:
+    age_seconds = (datetime.now(timezone.utc) - instance.updated_at).total_seconds()
+    return age_seconds <= max(max_age_seconds, 0.0)
+
+
+def resolve_instance(
+    cwd: Optional[str] = None,
+    project: Optional[str] = None,
+    max_age_seconds: Optional[float] = None,
+) -> InstanceInfo:
     current_dir = Path(cwd or os.getcwd()).resolve()
-    instances = rank_instances(load_instances(), current_dir, project)
+    instances = load_instances()
     if not instances:
         raise DiscoveryError("No Cubix Unity instance files were found under ~/.cubix-cli/instances.")
 
-    if project:
-        project_path = Path(project).resolve()
-        exact = [instance for instance in instances if Path(instance.project_path) == project_path]
-        if not exact:
+    project_path = Path(project).resolve() if project else None
+    if project_path:
+        instances = [instance for instance in instances if Path(instance.project_path) == project_path]
+        if not instances:
             raise DiscoveryError(f"No running Unity instance matched project path '{project_path}'.")
-        return exact[0]
 
-    return instances[0]
+    ranked = rank_instances(instances, current_dir, project)
+    if max_age_seconds is None:
+        return ranked[0]
+
+    best_score = score_instance(ranked[0], current_dir, project_path)[:2]
+    preferred = [
+        instance
+        for instance in ranked
+        if score_instance(instance, current_dir, project_path)[:2] == best_score
+    ]
+
+    for instance in preferred:
+        if is_active_instance(instance, max_age_seconds):
+            return instance
+
+    target = f" for project '{project_path}'" if project_path else ""
+    raise DiscoveryError(
+        f"No active Cubix Unity instance is currently advertising{target}. The connector may be reloading."
+    )

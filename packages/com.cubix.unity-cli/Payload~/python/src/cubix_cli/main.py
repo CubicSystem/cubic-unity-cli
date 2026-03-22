@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, Optional
 
 from . import __version__
 from .client import ClientError, UnityClient
-from .discovery import DiscoveryError, InstanceInfo, resolve_instance
+from .discovery import ACTIVE_INSTANCE_MAX_AGE_SECONDS, DiscoveryError, InstanceInfo, resolve_instance
 
 
 DEFAULT_STATUS_TIMEOUT_MS = 180000
@@ -18,6 +18,8 @@ STATUS_RETRY_COUNT = 2
 STATUS_RETRY_DELAY_SECONDS = 0.5
 STATUS_FILE_MAX_AGE_SECONDS = 10.0
 WAIT_LOOP_INTERVAL_SECONDS = 1.0
+CONNECTOR_RESOLVE_TIMEOUT_SECONDS = 20.0
+CONNECTOR_RESOLVE_RETRY_SECONDS = 0.5
 
 
 def parse_bool(value: str) -> bool:
@@ -55,8 +57,22 @@ def output(payload: Any, as_json: bool) -> None:
 
 
 def build_client(args: argparse.Namespace) -> UnityClient:
-    instance = resolve_instance(project=args.project)
-    return UnityClient(instance.url)
+    deadline = time.monotonic() + CONNECTOR_RESOLVE_TIMEOUT_SECONDS
+    last_error: Optional[Exception] = None
+
+    while True:
+        try:
+            instance = resolve_instance(project=args.project, max_age_seconds=ACTIVE_INSTANCE_MAX_AGE_SECONDS)
+            client = UnityClient(instance.url)
+            client.health(retries=STATUS_RETRY_COUNT, retry_delay=STATUS_RETRY_DELAY_SECONDS)
+            return client
+        except (DiscoveryError, ClientError) as exc:
+            last_error = exc
+
+        if time.monotonic() >= deadline:
+            raise last_error if last_error is not None else DiscoveryError("No active Cubix Unity instance was found.")
+
+        time.sleep(CONNECTOR_RESOLVE_RETRY_SECONDS)
 
 
 def load_recent_status_snapshot(instance: InstanceInfo) -> Optional[Dict[str, Any]]:
@@ -89,17 +105,25 @@ def load_recent_status_snapshot(instance: InstanceInfo) -> Optional[Dict[str, An
 
 
 def fetch_status_snapshot(args: argparse.Namespace, allow_file_fallback: bool = False) -> Dict[str, Any]:
-    instance = resolve_instance(project=args.project)
-    client = UnityClient(instance.url)
+    last_error: Optional[ClientError] = None
 
-    try:
-        return client.status(retries=STATUS_RETRY_COUNT, retry_delay=STATUS_RETRY_DELAY_SECONDS)["data"]
-    except ClientError:
-        if allow_file_fallback:
-            snapshot = load_recent_status_snapshot(instance)
-            if snapshot is not None:
-                return snapshot
-        raise
+    for attempt in range(2):
+        instance = resolve_instance(project=args.project, max_age_seconds=ACTIVE_INSTANCE_MAX_AGE_SECONDS)
+        client = UnityClient(instance.url)
+
+        try:
+            return client.status(retries=STATUS_RETRY_COUNT, retry_delay=STATUS_RETRY_DELAY_SECONDS)["data"]
+        except ClientError as exc:
+            last_error = exc
+            if allow_file_fallback:
+                snapshot = load_recent_status_snapshot(instance)
+                if snapshot is not None:
+                    return snapshot
+
+            if attempt == 0:
+                time.sleep(CONNECTOR_RESOLVE_RETRY_SECONDS)
+
+    raise last_error if last_error is not None else ClientError("Unity status request failed.")
 
 
 def connector_params_from_args(args: argparse.Namespace) -> Dict[str, Any]:
