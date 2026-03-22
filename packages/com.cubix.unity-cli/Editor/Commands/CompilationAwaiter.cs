@@ -197,7 +197,7 @@ namespace Cubix.UnityCli
                 }
             }
 
-            if (EditorApplication.isCompiling || CompilationPipeline.isCompiling)
+            if (EditorApplication.isCompiling)
             {
                 if (!string.Equals(record.state, "compiling", StringComparison.OrdinalIgnoreCase))
                 {
