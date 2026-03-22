@@ -27,9 +27,10 @@ Prefer structured commands over `cubix-cli exec csharp`:
 - `cubix-cli editor state|play|stop|pause`
 - `cubix-cli menu "<Unity/Menu/Path>" --validate-only`
 - `cubix-cli refresh --mode scripts`
-- `cubix-cli scene active|hierarchy|find`
+- `cubix-cli scene active|open|hierarchy|find`
 - `cubix-cli object create|set-active|set-parent|component-get|component-set`
 - `cubix-cli prefab instantiate|save|connect`
 - `cubix-cli reserialize Assets/...`
+- `cubix-cli test run --platform EditMode`
 - `cubix-cli playtest --duration-seconds 5`
 - `cubix-cli runtime state|inspect|mutate`

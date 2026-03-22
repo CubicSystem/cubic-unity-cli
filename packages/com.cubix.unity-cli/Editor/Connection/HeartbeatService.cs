@@ -84,10 +84,16 @@ namespace Cubix.UnityCli
         private static object BuildStatusSnapshot(int port, string url, bool connected)
         {
             var verify = CompilationAwaiter.GetVerifyJob();
+            var test = TestRunController.GetCurrentJob();
             var commands = ToolDiscovery.GetCommandMetadata();
             var activeScene = BuildActiveSceneSnapshot();
             var reloading = ConnectionService.IsReloading;
-            var ready = connected && !reloading && !EditorApplication.isCompiling && !EditorApplication.isUpdating && !CompilationAwaiter.HasPendingVerifyJob();
+            var ready = connected &&
+                        !reloading &&
+                        !EditorApplication.isCompiling &&
+                        !EditorApplication.isUpdating &&
+                        !CompilationAwaiter.HasPendingVerifyJob() &&
+                        !TestRunController.HasPendingRun();
             return new
             {
                 projectName = ConnectorPaths.ProjectName,
@@ -106,6 +112,7 @@ namespace Cubix.UnityCli
                 ready,
                 reloading,
                 verify,
+                test,
                 commandCount = commands.Count,
                 commands,
                 connection = ConnectionService.GetSnapshot(),

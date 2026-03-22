@@ -14,6 +14,7 @@ from .discovery import ACTIVE_INSTANCE_MAX_AGE_SECONDS, DiscoveryError, Instance
 
 DEFAULT_STATUS_TIMEOUT_MS = 180000
 DEFAULT_VERIFY_TIMEOUT_MS = 180000
+DEFAULT_TEST_TIMEOUT_MS = 180000
 DEFAULT_PLAYTEST_TIMEOUT_MS = 120000
 DEFAULT_PLAYTEST_DURATION_SECONDS = 5.0
 STATUS_RETRY_COUNT = 2
@@ -264,6 +265,49 @@ def wait_for_verify(args: argparse.Namespace, job_id: str, timeout_seconds: floa
     return last_state
 
 
+def build_idle_test_state() -> Dict[str, Any]:
+    return {
+        "state": "idle",
+        "success": None,
+        "message": "No Unity test run has been recorded.",
+    }
+
+
+def get_test_state_from_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    test_state = snapshot.get("test")
+    return test_state if isinstance(test_state, dict) else build_idle_test_state()
+
+
+def is_terminal_test_state(test_state: Dict[str, Any]) -> bool:
+    return test_state.get("success") is not None or test_state.get("state") in {"completed", "failed", "timed_out"}
+
+
+def wait_for_test(args: argparse.Namespace, job_id: str, timeout_seconds: float) -> Dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds + 15.0
+    last_state: Dict[str, Any] = {"id": job_id, "state": "pending"}
+    last_error: Optional[str] = None
+
+    while time.monotonic() < deadline:
+        try:
+            test_state = get_test_state_from_snapshot(fetch_status_snapshot(args, allow_file_fallback=True))
+            if test_state.get("id") == job_id:
+                last_state = test_state
+                if is_terminal_test_state(test_state):
+                    return test_state
+        except (DiscoveryError, ClientError) as exc:
+            last_error = str(exc)
+
+        time.sleep(WAIT_LOOP_INTERVAL_SECONDS)
+
+    last_state.setdefault("success", False)
+    last_state.setdefault(
+        "message",
+        "Timed out while waiting for Unity test status." + (f" Last connector error: {last_error}" if last_error else ""),
+    )
+    last_state.setdefault("state", "timed_out")
+    return last_state
+
+
 def find_latest_script(client: UnityClient) -> Optional[str]:
     try:
         project_path = Path(client.status(retries=STATUS_RETRY_COUNT, retry_delay=STATUS_RETRY_DELAY_SECONDS)["data"]["projectPath"])
@@ -324,6 +368,58 @@ def read_console_entries(
     return [entry for entry in entries if isinstance(entry, dict)]
 
 
+def resolve_results_path(path: Optional[str]) -> Optional[str]:
+    if not path:
+        return None
+    return str(Path(path).expanduser().resolve())
+
+
+def handle_test_run(args: argparse.Namespace) -> int:
+    try:
+        ready_snapshot = wait_for_ready(args, args.ready_timeout_ms)
+        if not ready_snapshot.get("ready"):
+            output(
+                {
+                    "success": False,
+                    "message": ready_snapshot.get("message", "Unity is not ready to run tests."),
+                    "status": ready_snapshot,
+                },
+                args.json,
+            )
+            return 2
+
+        client = build_client(args)
+        response = client.command(
+            "test.run",
+            {
+                "platform": args.platform,
+                "assemblyNames": args.assemblies or [],
+                "categoryNames": args.categories or [],
+                "testNames": args.filters or [],
+                "timeoutMs": args.timeout_ms,
+                "resultsPath": resolve_results_path(args.results),
+            },
+        )
+        data = response["data"]
+        final_state = wait_for_test(args, data["id"], args.timeout_ms / 1000.0)
+        success = bool(final_state.get("success"))
+        output(final_state, args.json)
+        return 0 if success else 2
+    except (DiscoveryError, ClientError) as exc:
+        output({"success": False, "message": str(exc)}, args.json)
+        return 1
+
+
+def handle_test_status(args: argparse.Namespace) -> int:
+    try:
+        test_state = get_test_state_from_snapshot(fetch_status_snapshot(args, allow_file_fallback=True))
+        output(test_state, args.json)
+        return 0 if test_state.get("success") or test_state.get("state") == "idle" else 2
+    except (DiscoveryError, ClientError) as exc:
+        output({"success": False, "message": str(exc)}, args.json)
+        return 1
+
+
 def handle_playtest(args: argparse.Namespace) -> int:
     try:
         ready_snapshot = wait_for_ready(args, args.ready_timeout_ms)
@@ -340,6 +436,9 @@ def handle_playtest(args: argparse.Namespace) -> int:
 
         client = build_client(args)
         overall_deadline = time.monotonic() + max(args.timeout_ms, 1000) / 1000.0
+
+        if args.start_scene:
+            command_data(client, "scene.open", {"path": args.start_scene})
 
         before_state = command_data(client, "editor.state")
         restarted_from_playing = bool(before_state.get("isPlaying"))
@@ -389,14 +488,75 @@ def handle_playtest(args: argparse.Namespace) -> int:
             )
             return 2
 
+        playtest_errors: list[Dict[str, Any]] = []
+        success = True
+        stop_reason = "duration_elapsed"
         runtime_start = command_data(client, "runtime.state")
+        if args.warmup_frames > 0:
+            warmup_start_frame = runtime_start.get("frameCount")
+            while True:
+                if time.monotonic() >= overall_deadline:
+                    success = False
+                    stop_reason = "timeout"
+                    break
+
+                if not runtime_start.get("isPlaying"):
+                    success = False
+                    stop_reason = "play_mode_exited"
+                    break
+
+                if not args.ignore_console_errors:
+                    playtest_errors = read_console_entries(client, level="error", limit=args.error_limit)
+                    if playtest_errors:
+                        success = False
+                        stop_reason = "console_error"
+                        break
+
+                current_frame = runtime_start.get("frameCount")
+                if isinstance(warmup_start_frame, int) and isinstance(current_frame, int):
+                    if current_frame - warmup_start_frame >= args.warmup_frames:
+                        break
+
+                time.sleep(PLAYTEST_POLL_INTERVAL_SECONDS)
+                runtime_start = command_data(client, "runtime.state")
+
+            if not success:
+                final_state = command_data(client, "editor.state")
+                if final_state.get("isPlaying"):
+                    command_data(client, "editor.stop")
+                    final_state = wait_for_play_mode_state(client, desired_is_playing=False, timeout_seconds=5.0)
+                output(
+                    {
+                        "success": False,
+                        "stopReason": stop_reason,
+                        "message": "Playtest failed during warmup.",
+                        "startScene": args.start_scene,
+                        "warmupFrames": args.warmup_frames,
+                        "runtime": {
+                            "start": runtime_start,
+                        },
+                        "editor": {
+                            "before": before_state,
+                            "entered": entered_state,
+                            "final": final_state,
+                            "restartedFromPlaying": restarted_from_playing,
+                        },
+                        "console": {
+                            "cleared": console_cleared,
+                            "errorCount": len(playtest_errors),
+                            "errors": playtest_errors,
+                        },
+                    },
+                    args.json,
+                )
+                return 2
+
+            runtime_start = command_data(client, "runtime.state")
+
         monitor_started_at = time.monotonic()
         requested_end_at = monitor_started_at + max(args.duration_seconds, 0.0)
 
         last_runtime_state = runtime_start
-        playtest_errors: list[Dict[str, Any]] = []
-        success = True
-        stop_reason = "duration_elapsed"
 
         while time.monotonic() < requested_end_at:
             if time.monotonic() >= overall_deadline:
@@ -453,6 +613,8 @@ def handle_playtest(args: argparse.Namespace) -> int:
             ),
             "durationSecondsRequested": args.duration_seconds,
             "durationSecondsElapsed": round(duration_seconds, 3),
+            "startScene": args.start_scene,
+            "warmupFrames": args.warmup_frames,
             "runtime": {
                 "start": runtime_start,
                 "end": last_runtime_state,
@@ -698,7 +860,23 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--timeout-ms", dest="timeout_ms", type=int, default=DEFAULT_VERIFY_TIMEOUT_MS)
     verify.set_defaults(handler=handle_verify)
 
+    test = subparsers.add_parser("test", help="Run Unity Test Runner suites.")
+    test_sub = test.add_subparsers(dest="command_action", required=True)
+    test_run = test_sub.add_parser("run")
+    test_run.add_argument("--platform", required=True, choices=["EditMode", "PlayMode"])
+    test_run.add_argument("--assembly", dest="assemblies", action="append")
+    test_run.add_argument("--category", dest="categories", action="append")
+    test_run.add_argument("--filter", dest="filters", action="append")
+    test_run.add_argument("--results")
+    test_run.add_argument("--timeout-ms", dest="timeout_ms", type=int, default=DEFAULT_TEST_TIMEOUT_MS)
+    test_run.add_argument("--ready-timeout-ms", dest="ready_timeout_ms", type=int, default=DEFAULT_STATUS_TIMEOUT_MS)
+    test_run.set_defaults(handler=handle_test_run)
+    test_status = test_sub.add_parser("status")
+    test_status.set_defaults(handler=handle_test_status)
+
     playtest = subparsers.add_parser("playtest", help="Run a simple Unity editor play mode smoke test.")
+    playtest.add_argument("--start-scene", dest="start_scene")
+    playtest.add_argument("--warmup-frames", dest="warmup_frames", type=int, default=0)
     playtest.add_argument("--duration-seconds", dest="duration_seconds", type=float, default=DEFAULT_PLAYTEST_DURATION_SECONDS)
     playtest.add_argument("--timeout-ms", dest="timeout_ms", type=int, default=DEFAULT_PLAYTEST_TIMEOUT_MS)
     playtest.add_argument("--ready-timeout-ms", dest="ready_timeout_ms", type=int, default=DEFAULT_STATUS_TIMEOUT_MS)
@@ -739,6 +917,9 @@ def build_parser() -> argparse.ArgumentParser:
     scene_sub = scene.add_subparsers(dest="command_action", required=True)
     scene_active = scene_sub.add_parser("active")
     scene_active.set_defaults(handler=handle_connector_command, command_group="scene", command_action="active")
+    scene_open = scene_sub.add_parser("open")
+    scene_open.add_argument("path")
+    scene_open.set_defaults(handler=handle_connector_command, command_group="scene", command_action="open")
     hierarchy = scene_sub.add_parser("hierarchy")
     hierarchy.add_argument("--include-components", dest="includeComponents", action="store_true")
     hierarchy.add_argument("--max-depth", dest="maxDepth", type=int, default=6)

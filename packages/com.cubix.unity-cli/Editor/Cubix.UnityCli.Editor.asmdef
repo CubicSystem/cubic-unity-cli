@@ -1,7 +1,9 @@
 {
   "name": "Cubix.UnityCli.Editor",
   "rootNamespace": "Cubix.UnityCli",
-  "references": [],
+  "references": [
+    "UnityEditor.TestRunner"
+  ],
   "includePlatforms": [
     "Editor"
   ],

@@ -98,7 +98,11 @@ namespace Cubix.UnityCli
                 url = HttpServer.Url,
                 projectHash = ConnectorPaths.ProjectHash,
                 lastError = string.IsNullOrWhiteSpace(LastError) ? HttpServer.LastError : LastError,
-                ready = connected && !EditorApplication.isCompiling && !EditorApplication.isUpdating && !CompilationAwaiter.HasPendingVerifyJob(),
+                ready = connected &&
+                        !EditorApplication.isCompiling &&
+                        !EditorApplication.isUpdating &&
+                        !CompilationAwaiter.HasPendingVerifyJob() &&
+                        !TestRunController.HasPendingRun(),
                 reloading = IsReloading,
                 commandCount = CommandRouter.ListCommands(includeUnsafe: true).Count
             };

@@ -24,6 +24,7 @@ namespace Cubix.UnityCli
         public const string Console = "console";
         public const string Assets = "assets";
         public const string Scripts = "scripts";
+        public const string Tests = "tests";
         public const string Diagnostics = "diagnostics";
         public const string Unsafe = "unsafe";
         public const string Experimental = "experimental";
