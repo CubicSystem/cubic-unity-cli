@@ -119,6 +119,7 @@ namespace Cubix.UnityCli
                 }
 
                 FileSystemUtility.CopyDirectory(source, destination);
+                WriteManifestVersion(Path.Combine(destination, ".cubix-skill.json"), skillName, target);
                 log.Add("Installed " + skillName + " -> " + destination);
             }
 
@@ -325,6 +326,18 @@ namespace Cubix.UnityCli
             {
                 return false;
             }
+        }
+
+        private static void WriteManifestVersion(string path, string skillName, SkillAgentTarget target)
+        {
+            var payload = new JObject
+            {
+                ["name"] = skillName,
+                ["version"] = PackageLayout.PackageVersion,
+                ["target"] = target == SkillAgentTarget.Codex ? "codex" : "claude"
+            };
+
+            File.WriteAllText(path, payload.ToString());
         }
 
         private static string FormatStatus(SkillInstallStatus status)

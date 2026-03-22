@@ -161,7 +161,7 @@ namespace Cubix.UnityCli
                     "Codex",
                     _codexSkills,
                     new ButtonDefinition(
-                        IsInstalled(_codexSkills.state) ? "Uninstall Codex Skills" : "Install Codex Skills",
+                        GetSkillActionLabel("Codex", _codexSkills.state),
                         () => RunInstallAction(IsInstalled(_codexSkills.state)
                             ? SkillInstallationService.Remove(SkillAgentTarget.Codex)
                             : SkillInstallationService.Install(SkillAgentTarget.Codex)),
@@ -174,7 +174,7 @@ namespace Cubix.UnityCli
                     "Claude Code",
                     _claudeSkills,
                     new ButtonDefinition(
-                        IsInstalled(_claudeSkills.state) ? "Uninstall Claude Code Skills" : "Install Claude Code Skills",
+                        GetSkillActionLabel("Claude Code", _claudeSkills.state),
                         () => RunInstallAction(IsInstalled(_claudeSkills.state)
                             ? SkillInstallationService.Remove(SkillAgentTarget.ClaudeCode)
                             : SkillInstallationService.Install(SkillAgentTarget.ClaudeCode)),
@@ -504,6 +504,21 @@ namespace Cubix.UnityCli
         private static bool IsInstalled(SkillInstallState state)
         {
             return state == SkillInstallState.Installed;
+        }
+
+        private static string GetSkillActionLabel(string agentName, SkillInstallState state)
+        {
+            if (state == SkillInstallState.Installed)
+            {
+                return "Uninstall " + agentName + " Skills";
+            }
+
+            if (state == SkillInstallState.Outdated)
+            {
+                return "Reinstall " + agentName + " Skills";
+            }
+
+            return "Install " + agentName + " Skills";
         }
 
         private static string NormalizeValue(string value)
