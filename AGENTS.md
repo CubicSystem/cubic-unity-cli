@@ -18,6 +18,11 @@ Do not edit installed user skills under home directories. Edit the payload sourc
 - The shell command is `cubix-cli`.
 - The connector is an internal subsystem, not the product name.
 
+## Versioning Rules
+
+- If the installable `cubix-cli` behavior changes and users must reinstall or update the CLI payload, bump the version even when the Unity package-side change is small.
+- Do not rely only on capability checks when a CLI reinstall is required for the fix to take effect. Use a version change so the setup window can clearly detect drift and prompt `Reinstall CLI`.
+
 ## Expected Workflow
 
 The default Unity coding loop is:

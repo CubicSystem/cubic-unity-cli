@@ -69,23 +69,30 @@ namespace Cubix.UnityCli
                 {
                     name = skillName,
                     sourcePath = sourcePath,
-                    destinationPath = destinationPath,
-                    expectedVersion = PackageLayout.PackageVersion
+                    destinationPath = destinationPath
                 };
 
-                if (!Directory.Exists(destinationPath))
+                if (!TryReadManifestVersion(Path.Combine(sourcePath, ".cubix-skill.json"), out var expectedVersion))
                 {
+                    skillStatus.state = SkillInstallState.Error;
+                    skillStatus.error = "Missing or invalid source .cubix-skill.json.";
+                }
+                else if (!Directory.Exists(destinationPath))
+                {
+                    skillStatus.expectedVersion = expectedVersion;
                     skillStatus.state = SkillInstallState.NotInstalled;
                 }
                 else if (!TryReadManifestVersion(Path.Combine(destinationPath, ".cubix-skill.json"), out var installedVersion))
                 {
+                    skillStatus.expectedVersion = expectedVersion;
                     skillStatus.state = SkillInstallState.Error;
                     skillStatus.error = "Missing or invalid .cubix-skill.json.";
                 }
                 else
                 {
+                    skillStatus.expectedVersion = expectedVersion;
                     skillStatus.installedVersion = installedVersion;
-                    skillStatus.state = installedVersion == PackageLayout.PackageVersion
+                    skillStatus.state = installedVersion == expectedVersion
                         ? SkillInstallState.Installed
                         : SkillInstallState.Outdated;
                 }
@@ -113,14 +120,19 @@ namespace Cubix.UnityCli
                     continue;
                 }
 
+                if (!TryReadManifestVersion(Path.Combine(source, ".cubix-skill.json"), out var sourceVersion))
+                {
+                    log.Add("Missing or invalid source manifest: " + Path.Combine(source, ".cubix-skill.json"));
+                    continue;
+                }
+
                 if (Directory.Exists(destination))
                 {
                     Directory.Delete(destination, true);
                 }
 
                 FileSystemUtility.CopyDirectory(source, destination);
-                WriteManifestVersion(Path.Combine(destination, ".cubix-skill.json"), skillName, target);
-                log.Add("Installed " + skillName + " -> " + destination);
+                log.Add("Installed " + skillName + " " + sourceVersion + " -> " + destination);
             }
 
             log.Add("Target: " + target);
@@ -326,18 +338,6 @@ namespace Cubix.UnityCli
             {
                 return false;
             }
-        }
-
-        private static void WriteManifestVersion(string path, string skillName, SkillAgentTarget target)
-        {
-            var payload = new JObject
-            {
-                ["name"] = skillName,
-                ["version"] = PackageLayout.PackageVersion,
-                ["target"] = target == SkillAgentTarget.Codex ? "codex" : "claude"
-            };
-
-            File.WriteAllText(path, payload.ToString());
         }
 
         private static string FormatStatus(SkillInstallStatus status)
