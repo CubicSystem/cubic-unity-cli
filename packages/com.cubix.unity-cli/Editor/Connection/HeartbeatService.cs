@@ -23,31 +23,7 @@ namespace Cubix.UnityCli
 
         public static object BuildStatusSnapshot()
         {
-            var verify = CompilationAwaiter.GetVerifyJob();
-            var commands = ToolDiscovery.GetCommandMetadata();
-            var activeScene = BuildActiveSceneSnapshot();
-            return new
-            {
-                projectName = ConnectorPaths.ProjectName,
-                projectPath = ConnectorPaths.ProjectPath,
-                projectHash = ConnectorPaths.ProjectHash,
-                port = HttpServer.Port,
-                url = HttpServer.Port > 0 ? "http://127.0.0.1:" + HttpServer.Port : null,
-                editor = new
-                {
-                    isPlaying = EditorApplication.isPlaying,
-                    isPaused = EditorApplication.isPaused,
-                    isCompiling = EditorApplication.isCompiling,
-                    isUpdating = EditorApplication.isUpdating
-                },
-                activeScene,
-                ready = !EditorApplication.isCompiling && !EditorApplication.isUpdating && !CompilationAwaiter.HasPendingVerifyJob(),
-                verify,
-                commandCount = commands.Count,
-                commands,
-                connection = ConnectionService.GetSnapshot(),
-                lastUpdatedUtc = DateTime.UtcNow.ToString("o")
-            };
+            return BuildStatusSnapshot(HttpServer.Port, HttpServer.Url, !ConnectionService.IsReloading);
         }
 
         public static void RefreshNow()
@@ -57,20 +33,7 @@ namespace Cubix.UnityCli
             {
                 ConnectorPaths.EnsureDirectories();
                 var snapshot = BuildStatusSnapshot();
-                CacheStatusSnapshot(snapshot);
-                WriteJson(ConnectorPaths.InstanceFilePath, new
-                {
-                    projectName = ConnectorPaths.ProjectName,
-                    projectPath = ConnectorPaths.ProjectPath,
-                    projectHash = ConnectorPaths.ProjectHash,
-                    port = HttpServer.Port,
-                    url = HttpServer.Url,
-                    pid = System.Diagnostics.Process.GetCurrentProcess().Id,
-                    updatedAtUtc = DateTime.UtcNow.ToString("o"),
-                    statusFile = ConnectorPaths.StatusFilePath(HttpServer.Port)
-                });
-
-                WriteJson(ConnectorPaths.StatusFilePath(HttpServer.Port), snapshot);
+                WriteSnapshotFiles(HttpServer.Port, HttpServer.Url, snapshot);
             }
         }
 
@@ -85,7 +48,17 @@ namespace Cubix.UnityCli
 
         public static void PrepareForReload()
         {
-            TryDelete(ConnectorPaths.InstanceFilePath);
+            ConnectorPaths.EnsureDirectories();
+
+            var port = HttpServer.Port;
+            var url = HttpServer.Url;
+            if (port > 0 && !string.IsNullOrWhiteSpace(url))
+            {
+                var snapshot = BuildStatusSnapshot(port, url, false);
+                WriteSnapshotFiles(port, url, snapshot);
+                return;
+            }
+
             lock (SnapshotLock)
             {
                 _cachedStatusSnapshot = null;
@@ -95,15 +68,44 @@ namespace Cubix.UnityCli
         public static void CleanupNow()
         {
             TryDelete(ConnectorPaths.InstanceFilePath);
-            if (HttpServer.Port > 0)
-            {
-                TryDelete(ConnectorPaths.StatusFilePath(HttpServer.Port));
-            }
+            TryDelete(ConnectorPaths.StatusFilePath());
 
             lock (SnapshotLock)
             {
                 _cachedStatusSnapshot = null;
             }
+        }
+
+        private static object BuildStatusSnapshot(int port, string url, bool connected)
+        {
+            var verify = CompilationAwaiter.GetVerifyJob();
+            var commands = ToolDiscovery.GetCommandMetadata();
+            var activeScene = BuildActiveSceneSnapshot();
+            var reloading = ConnectionService.IsReloading;
+            var ready = connected && !reloading && !EditorApplication.isCompiling && !EditorApplication.isUpdating && !CompilationAwaiter.HasPendingVerifyJob();
+            return new
+            {
+                projectName = ConnectorPaths.ProjectName,
+                projectPath = ConnectorPaths.ProjectPath,
+                projectHash = ConnectorPaths.ProjectHash,
+                port,
+                url,
+                editor = new
+                {
+                    isPlaying = EditorApplication.isPlaying,
+                    isPaused = EditorApplication.isPaused,
+                    isCompiling = EditorApplication.isCompiling,
+                    isUpdating = EditorApplication.isUpdating
+                },
+                activeScene,
+                ready,
+                reloading,
+                verify,
+                commandCount = commands.Count,
+                commands,
+                connection = ConnectionService.GetSnapshot(),
+                lastUpdatedUtc = DateTime.UtcNow.ToString("o")
+            };
         }
 
         private static void Pump()
@@ -160,6 +162,24 @@ namespace Cubix.UnityCli
             {
                 _cachedStatusSnapshot = snapshot;
             }
+        }
+
+        private static void WriteSnapshotFiles(int port, string url, object snapshot)
+        {
+            CacheStatusSnapshot(snapshot);
+            WriteJson(ConnectorPaths.InstanceFilePath, new
+            {
+                projectName = ConnectorPaths.ProjectName,
+                projectPath = ConnectorPaths.ProjectPath,
+                projectHash = ConnectorPaths.ProjectHash,
+                port,
+                url,
+                pid = System.Diagnostics.Process.GetCurrentProcess().Id,
+                updatedAtUtc = DateTime.UtcNow.ToString("o"),
+                statusFile = ConnectorPaths.StatusFilePath()
+            });
+
+            WriteJson(ConnectorPaths.StatusFilePath(), snapshot);
         }
 
         private static void TryDelete(string path)

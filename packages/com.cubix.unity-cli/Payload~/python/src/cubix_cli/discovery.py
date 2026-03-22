@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 
 class DiscoveryError(RuntimeError):
@@ -13,6 +13,7 @@ class DiscoveryError(RuntimeError):
 
 
 ACTIVE_INSTANCE_MAX_AGE_SECONDS = 15.0
+RELOADING_INSTANCE_MAX_AGE_SECONDS = 180.0
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,52 @@ def is_active_instance(instance: InstanceInfo, max_age_seconds: float = ACTIVE_I
     return age_seconds <= max(max_age_seconds, 0.0)
 
 
+def load_instance_status(instance: InstanceInfo) -> Optional[Dict[str, Any]]:
+    if not instance.status_file:
+        return None
+
+    path = Path(instance.status_file)
+    if not path.exists():
+        return None
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
+
+def parse_status_updated_at(payload: Dict[str, Any]) -> datetime:
+    updated_at_utc = payload.get("lastUpdatedUtc") or payload.get("lastUpdate")
+    if not isinstance(updated_at_utc, str):
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+
+    try:
+        return datetime.fromisoformat(updated_at_utc.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+
+
+def is_reloading_status(payload: Dict[str, Any]) -> bool:
+    connection = payload.get("connection")
+    return bool(payload.get("reloading")) or (
+        isinstance(connection, dict) and bool(connection.get("reloading"))
+    )
+
+
+def is_reloading_instance(
+    instance: InstanceInfo,
+    max_age_seconds: float = RELOADING_INSTANCE_MAX_AGE_SECONDS,
+) -> bool:
+    payload = load_instance_status(instance)
+    if payload is None or not is_reloading_status(payload):
+        return False
+
+    age_seconds = (datetime.now(timezone.utc) - parse_status_updated_at(payload)).total_seconds()
+    return age_seconds <= max(max_age_seconds, 0.0)
+
+
 def resolve_instance(
     cwd: Optional[str] = None,
     project: Optional[str] = None,
@@ -130,6 +177,10 @@ def resolve_instance(
 
     for instance in preferred:
         if is_active_instance(instance, max_age_seconds):
+            return instance
+
+    for instance in preferred:
+        if is_reloading_instance(instance):
             return instance
 
     target = f" for project '{project_path}'" if project_path else ""

@@ -17,6 +17,7 @@ DEFAULT_VERIFY_TIMEOUT_MS = 180000
 STATUS_RETRY_COUNT = 2
 STATUS_RETRY_DELAY_SECONDS = 0.5
 STATUS_FILE_MAX_AGE_SECONDS = 10.0
+STATUS_FILE_RELOADING_MAX_AGE_SECONDS = 180.0
 WAIT_LOOP_INTERVAL_SECONDS = 1.0
 CONNECTOR_RESOLVE_TIMEOUT_SECONDS = 20.0
 CONNECTOR_RESOLVE_RETRY_SECONDS = 0.5
@@ -98,7 +99,12 @@ def load_recent_status_snapshot(instance: InstanceInfo) -> Optional[Dict[str, An
         return None
 
     age_seconds = (datetime.now(timezone.utc) - updated_at).total_seconds()
-    if age_seconds > STATUS_FILE_MAX_AGE_SECONDS:
+    max_age_seconds = (
+        STATUS_FILE_RELOADING_MAX_AGE_SECONDS
+        if is_reloading_snapshot(payload)
+        else STATUS_FILE_MAX_AGE_SECONDS
+    )
+    if age_seconds > max_age_seconds:
         return None
 
     return payload if isinstance(payload, dict) else None
@@ -399,10 +405,20 @@ def is_ready_snapshot(snapshot: Dict[str, Any]) -> bool:
     editor = snapshot.get("editor", {})
     verify = snapshot.get("verify")
     verify_pending = isinstance(verify, dict) and verify.get("success") is None
+    if is_reloading_snapshot(snapshot):
+        return False
+
     return bool(snapshot.get("ready")) or (
         not editor.get("isCompiling", False)
         and not editor.get("isUpdating", False)
         and not verify_pending
+    )
+
+
+def is_reloading_snapshot(snapshot: Dict[str, Any]) -> bool:
+    connection = snapshot.get("connection")
+    return bool(snapshot.get("reloading")) or (
+        isinstance(connection, dict) and bool(connection.get("reloading"))
     )
 
 

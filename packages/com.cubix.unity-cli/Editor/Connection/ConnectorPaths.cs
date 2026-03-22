@@ -31,7 +31,9 @@ namespace Cubix.UnityCli
 
         public static string InstanceFilePath => Path.Combine(InstancesDirectory, ProjectHash + ".json");
 
-        public static string StatusFilePath(int port) => Path.Combine(StatusDirectory, port + ".json");
+        public static string StatusFilePath() => Path.Combine(StatusDirectory, ProjectHash + ".json");
+
+        public static string StatusFilePath(int port) => StatusFilePath();
 
         public static void EnsureDirectories()
         {

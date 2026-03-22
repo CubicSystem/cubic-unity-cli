@@ -12,6 +12,8 @@ namespace Cubix.UnityCli
 {
     internal static class HttpServer
     {
+        private const string PortEditorPrefKey = "Cubix.UnityCli.Port";
+
         private sealed class QueuedRequest
         {
             public CommandRequest Request { get; set; }
@@ -44,7 +46,7 @@ namespace Cubix.UnityCli
                 return true;
             }
 
-            var port = FindAvailablePort();
+            var port = FindAvailablePort(EditorPrefs.GetInt(PortEditorPrefKey, 0));
             if (port <= 0)
             {
                 LastError = "Could not find an available loopback port.";
@@ -57,6 +59,7 @@ namespace Cubix.UnityCli
                 _listener.Prefixes.Add("http://127.0.0.1:" + port + "/");
                 _listener.Start();
                 Port = port;
+                EditorPrefs.SetInt(PortEditorPrefKey, port);
                 LastError = null;
                 Task.Run(ListenLoop);
                 return true;
@@ -217,25 +220,44 @@ namespace Cubix.UnityCli
             }
         }
 
-        private static int FindAvailablePort()
+        private static int FindAvailablePort(int preferredPort)
         {
+            if (IsSupportedPort(preferredPort) && CanBind(preferredPort))
+            {
+                return preferredPort;
+            }
+
             for (var port = 48061; port <= 48120; port++)
             {
-                try
+                if (port != preferredPort && CanBind(port))
                 {
-                    var probe = new HttpListener();
-                    probe.Prefixes.Add("http://127.0.0.1:" + port + "/");
-                    probe.Start();
-                    probe.Stop();
-                    probe.Close();
                     return port;
-                }
-                catch
-                {
                 }
             }
 
             return 0;
+        }
+
+        private static bool IsSupportedPort(int port)
+        {
+            return port >= 48061 && port <= 48120;
+        }
+
+        private static bool CanBind(int port)
+        {
+            try
+            {
+                var probe = new HttpListener();
+                probe.Prefixes.Add("http://127.0.0.1:" + port + "/");
+                probe.Start();
+                probe.Stop();
+                probe.Close();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

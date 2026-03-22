@@ -11,6 +11,7 @@ namespace Cubix.UnityCli
         public string projectHash;
         public string lastError;
         public bool ready;
+        public bool reloading;
         public int commandCount;
     }
 
@@ -19,6 +20,7 @@ namespace Cubix.UnityCli
     {
         private const string AutoConnectEditorPrefKey = "Cubix.UnityCli.AutoConnectOnLoad";
         private const string ReconnectOnReloadSessionKey = "Cubix.UnityCli.ReconnectOnReload";
+        private const string ReloadingSessionKey = "Cubix.UnityCli.Reloading";
 
         static ConnectionService()
         {
@@ -28,6 +30,8 @@ namespace Cubix.UnityCli
         }
 
         public static string LastError { get; private set; }
+
+        public static bool IsReloading => SessionState.GetBool(ReloadingSessionKey, false);
 
         public static bool AutoConnectOnLoad
         {
@@ -41,6 +45,7 @@ namespace Cubix.UnityCli
             if (HttpServer.Start())
             {
                 SessionState.SetBool(ReconnectOnReloadSessionKey, true);
+                SessionState.SetBool(ReloadingSessionKey, false);
                 HeartbeatService.RefreshNow();
                 return true;
             }
@@ -53,6 +58,7 @@ namespace Cubix.UnityCli
         {
             LastError = null;
             SessionState.SetBool(ReconnectOnReloadSessionKey, false);
+            SessionState.SetBool(ReloadingSessionKey, false);
             HeartbeatService.CleanupNow();
             HttpServer.Stop();
         }
@@ -71,15 +77,17 @@ namespace Cubix.UnityCli
 
         public static ConnectionSnapshot GetSnapshot()
         {
+            var connected = HttpServer.IsRunning && !IsReloading;
             return new ConnectionSnapshot
             {
-                connected = HttpServer.IsRunning,
+                connected = connected,
                 autoConnectOnLoad = AutoConnectOnLoad,
                 port = HttpServer.Port,
                 url = HttpServer.Url,
                 projectHash = ConnectorPaths.ProjectHash,
                 lastError = string.IsNullOrWhiteSpace(LastError) ? HttpServer.LastError : LastError,
-                ready = HttpServer.IsRunning && !EditorApplication.isCompiling && !EditorApplication.isUpdating && !CompilationAwaiter.HasPendingVerifyJob(),
+                ready = connected && !EditorApplication.isCompiling && !EditorApplication.isUpdating && !CompilationAwaiter.HasPendingVerifyJob(),
+                reloading = IsReloading,
                 commandCount = CommandRouter.ListCommands(includeUnsafe: true).Count
             };
         }
@@ -97,6 +105,7 @@ namespace Cubix.UnityCli
             SessionState.SetBool(
                 ReconnectOnReloadSessionKey,
                 HttpServer.IsRunning || SessionState.GetBool(ReconnectOnReloadSessionKey, false));
+            SessionState.SetBool(ReloadingSessionKey, true);
             HeartbeatService.PrepareForReload();
             HttpServer.Stop();
         }
