@@ -74,12 +74,9 @@ namespace Cubix.UnityCli
                 case "state":
                     return new CommandSuccessResponse("Editor state.", BuildState());
                 case "play":
-                    EditorApplication.isPlaying = true;
-                    return new CommandSuccessResponse("Entered play mode.", BuildState());
+                    return RequestPlayModeTransition(true);
                 case "stop":
-                    EditorApplication.isPlaying = false;
-                    EditorApplication.isPaused = false;
-                    return new CommandSuccessResponse("Stopped play mode.", BuildState());
+                    return RequestPlayModeTransition(false);
                 case "pause":
                     var paused = parameters.Value<bool?>("paused") ?? !EditorApplication.isPaused;
                     EditorApplication.isPaused = paused;
@@ -113,6 +110,51 @@ namespace Cubix.UnityCli
                 isPaused = EditorApplication.isPaused,
                 isCompiling = EditorApplication.isCompiling,
                 isUpdating = EditorApplication.isUpdating,
+                activeScene = new
+                {
+                    name = scene.name,
+                    path = scene.path,
+                    isLoaded = scene.isLoaded
+                }
+            };
+        }
+
+        private static object RequestPlayModeTransition(bool desiredIsPlaying)
+        {
+            if (EditorApplication.isPlaying == desiredIsPlaying)
+            {
+                if (!desiredIsPlaying)
+                {
+                    EditorApplication.isPaused = false;
+                }
+
+                return new CommandSuccessResponse(
+                    desiredIsPlaying ? "Editor is already in play mode." : "Editor is already stopped.",
+                    BuildTransitionState(desiredIsPlaying, false));
+            }
+
+            EditorApplication.delayCall += () =>
+            {
+                EditorApplication.isPaused = false;
+                EditorApplication.isPlaying = desiredIsPlaying;
+            };
+
+            return new CommandSuccessResponse(
+                desiredIsPlaying ? "Starting play mode." : "Stopping play mode.",
+                BuildTransitionState(desiredIsPlaying, true));
+        }
+
+        private static object BuildTransitionState(bool requestedIsPlaying, bool transitionPending)
+        {
+            var scene = SceneManager.GetActiveScene();
+            return new
+            {
+                isPlaying = EditorApplication.isPlaying,
+                isPaused = EditorApplication.isPaused,
+                isCompiling = EditorApplication.isCompiling,
+                isUpdating = EditorApplication.isUpdating,
+                requestedIsPlaying,
+                transitionPending,
                 activeScene = new
                 {
                     name = scene.name,
