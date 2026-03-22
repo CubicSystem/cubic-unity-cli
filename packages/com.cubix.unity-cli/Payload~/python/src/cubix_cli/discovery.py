@@ -94,11 +94,11 @@ def score_instance(instance: InstanceInfo, cwd: Path, project_path: Optional[Pat
     else:
         explicit = 2
 
-    return (explicit, -proximity, -instance.updated_at.timestamp())
+    return (explicit, -proximity, -get_instance_last_seen_at(instance).timestamp())
 
 
 def is_active_instance(instance: InstanceInfo, max_age_seconds: float = ACTIVE_INSTANCE_MAX_AGE_SECONDS) -> bool:
-    age_seconds = (datetime.now(timezone.utc) - instance.updated_at).total_seconds()
+    age_seconds = (datetime.now(timezone.utc) - get_instance_last_seen_at(instance)).total_seconds()
     return age_seconds <= max(max_age_seconds, 0.0)
 
 
@@ -127,6 +127,16 @@ def parse_status_updated_at(payload: Dict[str, Any]) -> datetime:
         return datetime.fromisoformat(updated_at_utc.replace("Z", "+00:00")).astimezone(timezone.utc)
     except ValueError:
         return datetime.fromtimestamp(0, tz=timezone.utc)
+
+
+def get_instance_last_seen_at(instance: InstanceInfo) -> datetime:
+    payload = load_instance_status(instance)
+    if payload is not None:
+        updated_at = parse_status_updated_at(payload)
+        if updated_at.timestamp() > 0:
+            return updated_at
+
+    return instance.updated_at
 
 
 def is_reloading_status(payload: Dict[str, Any]) -> bool:

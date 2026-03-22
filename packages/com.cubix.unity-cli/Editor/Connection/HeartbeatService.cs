@@ -126,6 +126,11 @@ namespace Cubix.UnityCli
         private static void WriteJson(string path, object payload)
         {
             var json = JsonConvert.SerializeObject(payload, Formatting.Indented);
+            WriteJson(path, json);
+        }
+
+        private static bool WriteJson(string path, string json)
+        {
             for (var attempt = 0; attempt < 5; attempt++)
             {
                 try
@@ -136,13 +141,19 @@ namespace Cubix.UnityCli
                         writer.Write(json);
                     }
 
-                    return;
+                    return true;
                 }
                 catch (IOException) when (attempt < 4)
                 {
                     Thread.Sleep(15 * (attempt + 1));
                 }
+                catch (IOException)
+                {
+                    return false;
+                }
             }
+
+            return false;
         }
 
         private static object BuildActiveSceneSnapshot()
@@ -179,7 +190,10 @@ namespace Cubix.UnityCli
         private static void WriteSnapshotFiles(int port, string url, object snapshot)
         {
             CacheStatusSnapshot(snapshot);
-            WriteJson(ConnectorPaths.InstanceFilePath, new
+
+            WriteJson(ConnectorPaths.StatusFilePath(), snapshot);
+
+            var instancePayload = new
             {
                 projectName = ConnectorPaths.ProjectName,
                 projectPath = ConnectorPaths.ProjectPath,
@@ -187,11 +201,33 @@ namespace Cubix.UnityCli
                 port,
                 url,
                 pid = System.Diagnostics.Process.GetCurrentProcess().Id,
-                updatedAtUtc = DateTime.UtcNow.ToString("o"),
                 statusFile = ConnectorPaths.StatusFilePath()
-            });
+            };
+            WriteInstanceSnapshotIfNeeded(instancePayload);
+        }
 
-            WriteJson(ConnectorPaths.StatusFilePath(), snapshot);
+        private static void WriteInstanceSnapshotIfNeeded(object payload)
+        {
+            var path = ConnectorPaths.InstanceFilePath;
+            var json = JsonConvert.SerializeObject(payload, Formatting.Indented);
+
+            try
+            {
+                if (File.Exists(path))
+                {
+                    var existing = File.ReadAllText(path);
+                    if (string.Equals(existing, json, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                return;
+            }
+
+            WriteJson(path, json);
         }
 
         private static void TryDelete(string path)
