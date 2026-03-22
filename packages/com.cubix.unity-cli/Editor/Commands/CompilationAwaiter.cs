@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Globalization;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -87,12 +88,12 @@ namespace Cubix.UnityCli
 
         public static object GetVerifyJob()
         {
-            return BuildVerifyState(LoadVerifyJob());
+            return BuildVerifyState(RefreshVerifyJobState());
         }
 
         public static bool HasPendingVerifyJob()
         {
-            var record = LoadVerifyJob();
+            var record = RefreshVerifyJobState();
             return record != null && !record.success.HasValue;
         }
 
@@ -172,53 +173,7 @@ namespace Cubix.UnityCli
 
         private static void PumpVerifyJobs()
         {
-            var record = LoadVerifyJob();
-            if (record == null || record.success.HasValue)
-            {
-                return;
-            }
-
-            if (DateTime.TryParse(record.startedAtUtc, out var startedAt))
-            {
-                if (DateTime.UtcNow > startedAt.AddMilliseconds(record.timeoutMs))
-                {
-                    record.state = "failed";
-                    record.success = false;
-                    record.message = "Verify timed out while waiting for compilation to settle.";
-                    record.errors = GetCompilerMessages("error").ToList();
-                    record.updatedAtUtc = DateTime.UtcNow.ToString("o");
-                    SaveVerifyJob(record);
-                    return;
-                }
-
-                if (DateTime.UtcNow < startedAt.AddMilliseconds(500))
-                {
-                    return;
-                }
-            }
-
-            if (EditorApplication.isCompiling)
-            {
-                if (!string.Equals(record.state, "compiling", StringComparison.OrdinalIgnoreCase))
-                {
-                    record.state = "compiling";
-                    record.message = "Unity is compiling scripts.";
-                    record.updatedAtUtc = DateTime.UtcNow.ToString("o");
-                    SaveVerifyJob(record);
-                }
-
-                return;
-            }
-
-            var errors = GetCompilerMessages("error").ToList();
-            record.errors = errors;
-            record.success = errors.Count == 0;
-            record.state = record.success.Value ? "completed" : "failed";
-            record.message = record.success.Value
-                ? "Compilation finished without compiler errors."
-                : "Compilation finished with compiler errors.";
-            record.updatedAtUtc = DateTime.UtcNow.ToString("o");
-            SaveVerifyJob(record);
+            RefreshVerifyJobState();
         }
 
         private static void CleanupExpiredJob()
@@ -278,6 +233,90 @@ namespace Cubix.UnityCli
         private static void SaveVerifyJob(VerifyJobRecord record)
         {
             SessionState.SetString(VerifyJobKey, JsonConvert.SerializeObject(record));
+        }
+
+        private static VerifyJobRecord RefreshVerifyJobState()
+        {
+            var record = LoadVerifyJob();
+            if (record == null || record.success.HasValue)
+            {
+                return record;
+            }
+
+            var nowUtc = DateTime.UtcNow;
+            if (TryGetStartedAtUtc(record, out var startedAtUtc))
+            {
+                if (nowUtc > startedAtUtc.AddMilliseconds(record.timeoutMs))
+                {
+                    record.state = "failed";
+                    record.success = false;
+                    record.message = "Verify timed out while waiting for compilation to settle.";
+                    record.errors = GetCompilerMessages("error").ToList();
+                    record.updatedAtUtc = nowUtc.ToString("o");
+                    SaveVerifyJob(record);
+                    return record;
+                }
+
+                if (nowUtc < startedAtUtc.AddMilliseconds(500))
+                {
+                    return record;
+                }
+            }
+
+            if (ConnectionService.IsReloading)
+            {
+                return UpdatePendingState(record, "compiling", "Unity is reloading assemblies.");
+            }
+
+            if (EditorApplication.isUpdating)
+            {
+                return UpdatePendingState(record, "compiling", "Unity is refreshing assets.");
+            }
+
+            if (EditorApplication.isCompiling)
+            {
+                return UpdatePendingState(record, "compiling", "Unity is compiling scripts.");
+            }
+
+            var errors = GetCompilerMessages("error").ToList();
+            record.errors = errors;
+            record.success = errors.Count == 0;
+            record.state = record.success.Value ? "completed" : "failed";
+            record.message = record.success.Value
+                ? "Compilation finished without compiler errors."
+                : "Compilation finished with compiler errors.";
+            record.updatedAtUtc = nowUtc.ToString("o");
+            SaveVerifyJob(record);
+            return record;
+        }
+
+        private static VerifyJobRecord UpdatePendingState(VerifyJobRecord record, string state, string message)
+        {
+            if (!string.Equals(record.state, state, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(record.message, message, StringComparison.Ordinal))
+            {
+                record.state = state;
+                record.message = message;
+                record.updatedAtUtc = DateTime.UtcNow.ToString("o");
+                SaveVerifyJob(record);
+            }
+
+            return record;
+        }
+
+        private static bool TryGetStartedAtUtc(VerifyJobRecord record, out DateTime startedAtUtc)
+        {
+            if (!DateTime.TryParse(
+                    record.startedAtUtc,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal,
+                    out startedAtUtc))
+            {
+                startedAtUtc = default;
+                return false;
+            }
+
+            return true;
         }
 
         private static IReadOnlyList<CompilerMessageRecord> LoadCompilerMessages()

@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Text;
+using System.Threading;
 using Newtonsoft.Json;
 using UnityEditor;
 using UnityEngine.SceneManagement;
@@ -10,6 +12,7 @@ namespace Cubix.UnityCli
     internal static class HeartbeatService
     {
         private static readonly object SnapshotLock = new object();
+        private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
 
         private static double _nextHeartbeatAt;
         private static object _cachedStatusSnapshot;
@@ -123,14 +126,23 @@ namespace Cubix.UnityCli
         private static void WriteJson(string path, object payload)
         {
             var json = JsonConvert.SerializeObject(payload, Formatting.Indented);
-            var tempPath = path + ".tmp";
-            File.WriteAllText(tempPath, json);
-            if (File.Exists(path))
+            for (var attempt = 0; attempt < 5; attempt++)
             {
-                File.Delete(path);
-            }
+                try
+                {
+                    using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+                    using (var writer = new StreamWriter(stream, Utf8NoBom))
+                    {
+                        writer.Write(json);
+                    }
 
-            File.Move(tempPath, path);
+                    return;
+                }
+                catch (IOException) when (attempt < 4)
+                {
+                    Thread.Sleep(15 * (attempt + 1));
+                }
+            }
         }
 
         private static object BuildActiveSceneSnapshot()
