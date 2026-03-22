@@ -3,12 +3,21 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from . import __version__
 from .client import ClientError, UnityClient
-from .discovery import DiscoveryError, resolve_instance
+from .discovery import DiscoveryError, InstanceInfo, resolve_instance
+
+
+DEFAULT_STATUS_TIMEOUT_MS = 180000
+DEFAULT_VERIFY_TIMEOUT_MS = 180000
+STATUS_RETRY_COUNT = 2
+STATUS_RETRY_DELAY_SECONDS = 0.5
+STATUS_FILE_MAX_AGE_SECONDS = 10.0
+WAIT_LOOP_INTERVAL_SECONDS = 1.0
 
 
 def parse_bool(value: str) -> bool:
@@ -47,9 +56,50 @@ def output(payload: Any, as_json: bool) -> None:
 
 def build_client(args: argparse.Namespace) -> UnityClient:
     instance = resolve_instance(project=args.project)
+    return UnityClient(instance.url)
+
+
+def load_recent_status_snapshot(instance: InstanceInfo) -> Optional[Dict[str, Any]]:
+    if not instance.status_file:
+        return None
+
+    path = Path(instance.status_file)
+    if not path.exists():
+        return None
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    updated_at_utc = payload.get("lastUpdatedUtc")
+    if not isinstance(updated_at_utc, str):
+        return None
+
+    try:
+        updated_at = datetime.fromisoformat(updated_at_utc.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+    age_seconds = (datetime.now(timezone.utc) - updated_at).total_seconds()
+    if age_seconds > STATUS_FILE_MAX_AGE_SECONDS:
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
+
+def fetch_status_snapshot(args: argparse.Namespace, allow_file_fallback: bool = False) -> Dict[str, Any]:
+    instance = resolve_instance(project=args.project)
     client = UnityClient(instance.url)
-    client.health()
-    return client
+
+    try:
+        return client.status(retries=STATUS_RETRY_COUNT, retry_delay=STATUS_RETRY_DELAY_SECONDS)["data"]
+    except ClientError:
+        if allow_file_fallback:
+            snapshot = load_recent_status_snapshot(instance)
+            if snapshot is not None:
+                return snapshot
+        raise
 
 
 def connector_params_from_args(args: argparse.Namespace) -> Dict[str, Any]:
@@ -157,30 +207,33 @@ def handle_verify(args: argparse.Namespace) -> int:
 
 
 def wait_for_verify(args: argparse.Namespace, job_id: str, timeout_seconds: float) -> Dict[str, Any]:
-    deadline = time.monotonic() + timeout_seconds + 5.0
+    deadline = time.monotonic() + timeout_seconds + 15.0
     last_state: Dict[str, Any] = {"id": job_id, "state": "pending"}
+    last_error: Optional[str] = None
 
     while time.monotonic() < deadline:
         try:
-            client = build_client(args)
-            verify = client.status()["data"].get("verify")
+            verify = fetch_status_snapshot(args, allow_file_fallback=True).get("verify")
             if verify and verify.get("id") == job_id:
                 last_state = verify
                 if verify.get("success") is not None:
                     return verify
-        except (DiscoveryError, ClientError):
-            pass
+        except (DiscoveryError, ClientError) as exc:
+            last_error = str(exc)
 
-        time.sleep(1.0)
+        time.sleep(WAIT_LOOP_INTERVAL_SECONDS)
 
     last_state.setdefault("success", False)
-    last_state.setdefault("message", "Timed out while waiting for verify status.")
+    last_state.setdefault(
+        "message",
+        "Timed out while waiting for verify status." + (f" Last connector error: {last_error}" if last_error else ""),
+    )
     return last_state
 
 
 def find_latest_script(client: UnityClient) -> Optional[str]:
     try:
-        project_path = Path(client.status()["data"]["projectPath"])
+        project_path = Path(client.status(retries=STATUS_RETRY_COUNT, retry_delay=STATUS_RETRY_DELAY_SECONDS)["data"]["projectPath"])
     except Exception:
         return None
 
@@ -231,7 +284,7 @@ def handle_exec(args: argparse.Namespace) -> int:
 
 def handle_status(args: argparse.Namespace) -> int:
     try:
-        snapshot = wait_for_ready(args, args.timeout_ms) if args.wait_ready else build_client(args).status()["data"]
+        snapshot = wait_for_ready(args, args.timeout_ms) if args.wait_ready else fetch_status_snapshot(args, allow_file_fallback=True)
         output(snapshot, args.json)
         return 0 if snapshot.get("ready") else 2
     except (DiscoveryError, ClientError) as exc:
@@ -332,17 +385,25 @@ def is_ready_snapshot(snapshot: Dict[str, Any]) -> bool:
 def wait_for_ready(args: argparse.Namespace, timeout_ms: int) -> Dict[str, Any]:
     deadline = time.monotonic() + max(timeout_ms, 1000) / 1000.0
     last_snapshot: Dict[str, Any] = {}
+    last_error: Optional[str] = None
 
     while time.monotonic() < deadline:
-        snapshot = build_client(args).status()["data"]
-        last_snapshot = snapshot
-        if is_ready_snapshot(snapshot):
-            snapshot["ready"] = True
-            return snapshot
-        time.sleep(1.0)
+        try:
+            snapshot = fetch_status_snapshot(args, allow_file_fallback=True)
+            last_snapshot = snapshot
+            if is_ready_snapshot(snapshot):
+                snapshot["ready"] = True
+                return snapshot
+        except (DiscoveryError, ClientError) as exc:
+            last_error = str(exc)
+
+        time.sleep(WAIT_LOOP_INTERVAL_SECONDS)
 
     last_snapshot.setdefault("ready", False)
-    last_snapshot.setdefault("message", "Timed out while waiting for Unity to become ready.")
+    last_snapshot.setdefault(
+        "message",
+        "Timed out while waiting for Unity to become ready." + (f" Last connector error: {last_error}" if last_error else ""),
+    )
     return last_snapshot
 
 
@@ -359,7 +420,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="Read connector and editor status.")
     status.add_argument("--wait-ready", action="store_true", help="Wait until Unity finishes compiling and updating.")
-    status.add_argument("--timeout-ms", dest="timeout_ms", type=int, default=60000)
+    status.add_argument("--timeout-ms", dest="timeout_ms", type=int, default=DEFAULT_STATUS_TIMEOUT_MS)
     status.set_defaults(handler=handle_status)
 
     list_parser = subparsers.add_parser("list", help="List available Unity commands.")
@@ -395,7 +456,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify", help="Run Unity verify workflow.")
     verify.add_argument("path", nargs="?")
     verify.add_argument("--all", action="store_true", help="Refresh the whole AssetDatabase before verify.")
-    verify.add_argument("--timeout-ms", dest="timeout_ms", type=int, default=60000)
+    verify.add_argument("--timeout-ms", dest="timeout_ms", type=int, default=DEFAULT_VERIFY_TIMEOUT_MS)
     verify.set_defaults(handler=handle_verify)
 
     editor = subparsers.add_parser("editor", help="Control Unity editor state.")

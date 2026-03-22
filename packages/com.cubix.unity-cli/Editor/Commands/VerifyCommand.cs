@@ -16,7 +16,7 @@ namespace Cubix.UnityCli
                 Parameters = CommandMetadata.Parameters(
                     CommandMetadata.Parameter("path", "string", false, "Known AssetDatabase path for the changed script."),
                     CommandMetadata.Parameter("mode", "string", false, "Verification mode.", "refresh", "reimport", "refresh"),
-                    CommandMetadata.Parameter("timeoutMs", "integer", false, "Maximum time to wait for compilation.", 60000))
+                    CommandMetadata.Parameter("timeoutMs", "integer", false, "Maximum time to wait for compilation.", 180000))
             };
             yield return new CommandDefinition
             {

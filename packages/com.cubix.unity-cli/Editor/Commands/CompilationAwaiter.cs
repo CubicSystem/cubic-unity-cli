@@ -52,7 +52,7 @@ namespace Cubix.UnityCli
         {
             var assetPath = ObjectResolver.NormalizeAssetPath(parameters?.Value<string>("path"));
             var requestedMode = parameters?.Value<string>("mode");
-            var timeoutMs = Math.Max(parameters?.Value<int?>("timeoutMs") ?? 60000, 1000);
+            var timeoutMs = Math.Max(parameters?.Value<int?>("timeoutMs") ?? 180000, 1000);
 
             var mode = ResolveMode(assetPath, requestedMode);
             ClearCompilerMessages();
