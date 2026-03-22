@@ -105,7 +105,6 @@ namespace Cubix.UnityCli
                 EditorGUILayout.LabelField("Connection", EditorStyles.boldLabel);
                 var snapshot = ConnectionService.GetSnapshot();
                 DrawStateRow("Connected", snapshot.connected);
-                DrawStateRow("Ready", snapshot.ready);
                 DrawWrappedRow("Port", snapshot.port > 0 ? snapshot.port.ToString() : "-");
                 DrawWrappedRow("URL", snapshot.url);
                 DrawWrappedRow("Project Hash", snapshot.projectHash);
