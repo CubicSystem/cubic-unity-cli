@@ -33,9 +33,25 @@ namespace Cubix.UnityCli
 
         public static int Port { get; private set; }
 
+        public static int AdvertisedPort
+        {
+            get
+            {
+                if (Port > 0)
+                {
+                    return Port;
+                }
+
+                var preferredPort = EditorPrefs.GetInt(PortEditorPrefKey, 0);
+                return IsSupportedPort(preferredPort) ? preferredPort : 0;
+            }
+        }
+
         public static bool IsRunning => _listener != null && _listener.IsListening;
 
         public static string Url => Port > 0 ? "http://127.0.0.1:" + Port : null;
+
+        public static string AdvertisedUrl => BuildLoopbackUrl(AdvertisedPort);
 
         public static string LastError { get; private set; }
 
@@ -241,6 +257,11 @@ namespace Cubix.UnityCli
         private static bool IsSupportedPort(int port)
         {
             return port >= 48061 && port <= 48120;
+        }
+
+        private static string BuildLoopbackUrl(int port)
+        {
+            return IsSupportedPort(port) ? "http://127.0.0.1:" + port : null;
         }
 
         private static bool CanBind(int port)

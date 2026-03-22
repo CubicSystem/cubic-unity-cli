@@ -21,17 +21,25 @@ namespace Cubix.UnityCli
         private const string AutoConnectEditorPrefKey = "Cubix.UnityCli.AutoConnectOnLoad";
         private const string ReconnectOnReloadSessionKey = "Cubix.UnityCli.ReconnectOnReload";
         private const string ReloadingSessionKey = "Cubix.UnityCli.Reloading";
+        private const double ReconnectRetryIntervalSeconds = 1.0d;
+
+        private static bool _autoConnectPending;
+        private static double _nextReconnectAttemptAt;
 
         static ConnectionService()
         {
+            _autoConnectPending = AutoConnectOnLoad || SessionState.GetBool(ReconnectOnReloadSessionKey, false);
             AssemblyReloadEvents.beforeAssemblyReload += HandleBeforeAssemblyReload;
             EditorApplication.delayCall += EnsureAutoConnected;
+            EditorApplication.update += PumpReconnect;
             EditorApplication.quitting += Disconnect;
         }
 
         public static string LastError { get; private set; }
 
         public static bool IsReloading => SessionState.GetBool(ReloadingSessionKey, false);
+
+        public static bool ShouldMaintainStatusFiles => IsReloading || _autoConnectPending;
 
         public static bool AutoConnectOnLoad
         {
@@ -44,6 +52,8 @@ namespace Cubix.UnityCli
             LastError = null;
             if (HttpServer.Start())
             {
+                _autoConnectPending = false;
+                _nextReconnectAttemptAt = 0d;
                 SessionState.SetBool(ReconnectOnReloadSessionKey, true);
                 SessionState.SetBool(ReloadingSessionKey, false);
                 HeartbeatService.RefreshNow();
@@ -57,6 +67,8 @@ namespace Cubix.UnityCli
         public static void Disconnect()
         {
             LastError = null;
+            _autoConnectPending = false;
+            _nextReconnectAttemptAt = 0d;
             SessionState.SetBool(ReconnectOnReloadSessionKey, false);
             SessionState.SetBool(ReloadingSessionKey, false);
             HeartbeatService.CleanupNow();
@@ -94,9 +106,9 @@ namespace Cubix.UnityCli
 
         private static void EnsureAutoConnected()
         {
-            if (AutoConnectOnLoad || SessionState.GetBool(ReconnectOnReloadSessionKey, false))
+            if (_autoConnectPending)
             {
-                Connect();
+                TryReconnect();
             }
         }
 
@@ -106,8 +118,36 @@ namespace Cubix.UnityCli
                 ReconnectOnReloadSessionKey,
                 HttpServer.IsRunning || SessionState.GetBool(ReconnectOnReloadSessionKey, false));
             SessionState.SetBool(ReloadingSessionKey, true);
+            _autoConnectPending = true;
+            _nextReconnectAttemptAt = 0d;
             HeartbeatService.PrepareForReload();
             HttpServer.Stop();
+        }
+
+        private static void PumpReconnect()
+        {
+            if (!_autoConnectPending || HttpServer.IsRunning)
+            {
+                return;
+            }
+
+            if (EditorApplication.timeSinceStartup < _nextReconnectAttemptAt)
+            {
+                return;
+            }
+
+            TryReconnect();
+        }
+
+        private static void TryReconnect()
+        {
+            if (Connect())
+            {
+                return;
+            }
+
+            _nextReconnectAttemptAt = EditorApplication.timeSinceStartup + ReconnectRetryIntervalSeconds;
+            HeartbeatService.RefreshNow();
         }
     }
 }

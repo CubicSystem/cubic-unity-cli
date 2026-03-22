@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -118,6 +118,24 @@ def load_instance_status(instance: InstanceInfo) -> Optional[Dict[str, Any]]:
     return payload if isinstance(payload, dict) else None
 
 
+def merge_instance_endpoint_from_status(instance: InstanceInfo) -> InstanceInfo:
+    payload = load_instance_status(instance)
+    if payload is None:
+        return instance
+
+    port = payload.get("port")
+    url = payload.get("url")
+    if not port or not isinstance(url, str) or not url.strip():
+        return instance
+
+    try:
+        resolved_port = int(port)
+    except (TypeError, ValueError):
+        return instance
+
+    return replace(instance, port=resolved_port, url=url.rstrip("/"))
+
+
 def parse_status_updated_at(payload: Dict[str, Any]) -> datetime:
     updated_at_utc = payload.get("lastUpdatedUtc") or payload.get("lastUpdate")
     if not isinstance(updated_at_utc, str):
@@ -176,7 +194,7 @@ def resolve_instance(
 
     ranked = rank_instances(instances, current_dir, project)
     if max_age_seconds is None:
-        return ranked[0]
+        return merge_instance_endpoint_from_status(ranked[0])
 
     best_score = score_instance(ranked[0], current_dir, project_path)[:2]
     preferred = [
@@ -187,11 +205,11 @@ def resolve_instance(
 
     for instance in preferred:
         if is_active_instance(instance, max_age_seconds):
-            return instance
+            return merge_instance_endpoint_from_status(instance)
 
     for instance in preferred:
         if is_reloading_instance(instance):
-            return instance
+            return merge_instance_endpoint_from_status(instance)
 
     target = f" for project '{project_path}'" if project_path else ""
     raise DiscoveryError(

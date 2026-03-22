@@ -26,17 +26,19 @@ namespace Cubix.UnityCli
 
         public static object BuildStatusSnapshot()
         {
-            return BuildStatusSnapshot(HttpServer.Port, HttpServer.Url, !ConnectionService.IsReloading);
+            var port = HttpServer.AdvertisedPort;
+            var url = HttpServer.IsRunning ? HttpServer.Url : HttpServer.AdvertisedUrl;
+            return BuildStatusSnapshot(port, url, HttpServer.IsRunning && !ConnectionService.IsReloading);
         }
 
         public static void RefreshNow()
         {
             _nextHeartbeatAt = 0d;
-            if (HttpServer.IsRunning)
+            if (HttpServer.IsRunning || ConnectionService.ShouldMaintainStatusFiles)
             {
                 ConnectorPaths.EnsureDirectories();
                 var snapshot = BuildStatusSnapshot();
-                WriteSnapshotFiles(HttpServer.Port, HttpServer.Url, snapshot);
+                WriteSnapshotFiles(HttpServer.AdvertisedPort, HttpServer.IsRunning ? HttpServer.Url : HttpServer.AdvertisedUrl, snapshot);
             }
         }
 
@@ -113,7 +115,12 @@ namespace Cubix.UnityCli
 
         private static void Pump()
         {
-            if (EditorApplication.timeSinceStartup < _nextHeartbeatAt || !HttpServer.IsRunning)
+            if (EditorApplication.timeSinceStartup < _nextHeartbeatAt)
+            {
+                return;
+            }
+
+            if (!HttpServer.IsRunning && !ConnectionService.ShouldMaintainStatusFiles)
             {
                 return;
             }
@@ -192,6 +199,11 @@ namespace Cubix.UnityCli
             CacheStatusSnapshot(snapshot);
 
             WriteJson(ConnectorPaths.StatusFilePath(), snapshot);
+
+            if (port <= 0 || string.IsNullOrWhiteSpace(url))
+            {
+                return;
+            }
 
             var instancePayload = new
             {
