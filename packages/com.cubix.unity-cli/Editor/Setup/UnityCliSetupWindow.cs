@@ -25,12 +25,14 @@ namespace Cubix.UnityCli
             public readonly string Label;
             public readonly System.Action Action;
             public readonly Color? BackgroundColor;
+            public readonly bool Enabled;
 
-            public ButtonDefinition(string label, System.Action action, Color? backgroundColor = null)
+            public ButtonDefinition(string label, System.Action action, Color? backgroundColor = null, bool enabled = true)
             {
                 Label = label;
                 Action = action;
                 BackgroundColor = backgroundColor;
+                Enabled = enabled;
             }
         }
 
@@ -59,8 +61,6 @@ namespace Cubix.UnityCli
                 _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
                 DrawHeader();
                 EditorGUILayout.Space(8f);
-                DrawQuickSetupSection();
-                EditorGUILayout.Space(8f);
                 DrawConnectionSection();
                 EditorGUILayout.Space(8f);
                 DrawCliSection();
@@ -83,21 +83,6 @@ namespace Cubix.UnityCli
             DrawWrappedRow("Package Root", PackageLayout.PackageRoot);
         }
 
-        private void DrawQuickSetupSection()
-        {
-            using (new EditorGUILayout.VerticalScope("box"))
-            {
-                EditorGUILayout.LabelField("Quick Setup", EditorStyles.boldLabel);
-                EditorGUILayout.HelpBox("Install only the missing CLI and skill components for the current state.", MessageType.None);
-                DrawButtonGrid(
-                    new ButtonDefinition(
-                        AreRequiredComponentsInstalled() ? "Required Components Installed" : "Install Required Components",
-                        () => RunInstallAction(InstallRequiredComponents()),
-                        AreRequiredComponentsInstalled() ? SuccessColor : FailureColor)
-                );
-            }
-        }
-
         private void DrawConnectionSection()
         {
             using (new EditorGUILayout.VerticalScope("box"))
@@ -117,20 +102,17 @@ namespace Cubix.UnityCli
                 }
 
                 DrawButtonGrid(
-                    new ButtonDefinition(snapshot.connected ? "Disconnect" : "Connect", () =>
+                    new ButtonDefinition("Connect", () =>
                     {
-                        if (snapshot.connected)
-                        {
-                            ConnectionService.Disconnect();
-                            LogAction("Disconnected.");
-                        }
-                        else
-                        {
-                            LogAction(ConnectionService.Connect() ? "Connected." : "Connection failed: " + ConnectionService.GetSnapshot().lastError);
-                        }
-
+                        LogAction(ConnectionService.Connect() ? "Connected." : "Connection failed: " + ConnectionService.GetSnapshot().lastError);
                         RefreshAll();
-                    }, snapshot.connected ? SuccessColor : FailureColor)
+                    }, snapshot.connected ? SuccessColor : FailureColor, !snapshot.connected),
+                    new ButtonDefinition("Disconnect", () =>
+                    {
+                        ConnectionService.Disconnect();
+                        LogAction("Disconnected.");
+                        RefreshAll();
+                    }, null, snapshot.connected)
                 );
             }
         }
@@ -170,17 +152,19 @@ namespace Cubix.UnityCli
 
                 DrawButtonGrid(
                     new ButtonDefinition(
-                        IsInstalled(_codexSkills.state) ? "Uninstall Codex" : "Install Codex",
+                        IsInstalled(_codexSkills.state) ? "Uninstall Codex Skills" : "Install Codex Skills",
                         () => RunInstallAction(IsInstalled(_codexSkills.state)
                             ? SkillInstallationService.Remove(SkillAgentTarget.Codex)
                             : SkillInstallationService.Install(SkillAgentTarget.Codex)),
-                        IsInstalled(_codexSkills.state) ? SuccessColor : FailureColor),
+                        IsInstalled(_codexSkills.state) ? SuccessColor : FailureColor,
+                        IsInstalled(_codexSkills.state) || _codexSkills.agentAvailable),
                     new ButtonDefinition(
-                        IsInstalled(_claudeSkills.state) ? "Uninstall Claude" : "Install Claude",
+                        IsInstalled(_claudeSkills.state) ? "Uninstall Claude Code Skills" : "Install Claude Code Skills",
                         () => RunInstallAction(IsInstalled(_claudeSkills.state)
                             ? SkillInstallationService.Remove(SkillAgentTarget.ClaudeCode)
                             : SkillInstallationService.Install(SkillAgentTarget.ClaudeCode)),
-                        IsInstalled(_claudeSkills.state) ? SuccessColor : FailureColor)
+                        IsInstalled(_claudeSkills.state) ? SuccessColor : FailureColor,
+                        IsInstalled(_claudeSkills.state) || _claudeSkills.agentAvailable)
                 );
             }
         }
@@ -188,6 +172,8 @@ namespace Cubix.UnityCli
         private void DrawSkillStatus(string label, SkillInstallStatus status)
         {
             DrawColoredRow(label, status.state.ToString(), IsInstalled(status.state));
+            DrawColoredRow(label + " App", status.agentAvailable ? "Detected" : "Not Detected", status.agentAvailable);
+            DrawWrappedRow(label + " App Path", status.agentLocation);
             DrawWrappedRow(label + " Path", status.rootPath);
             foreach (var skill in status.skills)
             {
@@ -358,74 +344,27 @@ namespace Cubix.UnityCli
 
         private bool DrawButton(ButtonDefinition button)
         {
-            var previousColor = GUI.backgroundColor;
-            if (button.BackgroundColor.HasValue)
+            using (new EditorGUI.DisabledScope(!button.Enabled))
             {
-                GUI.backgroundColor = button.BackgroundColor.Value;
+                var previousColor = GUI.backgroundColor;
+                if (button.Enabled && button.BackgroundColor.HasValue)
+                {
+                    GUI.backgroundColor = button.BackgroundColor.Value;
+                }
+
+                try
+                {
+                    return GUILayout.Button(
+                        button.Label,
+                        _wrappedButtonStyle,
+                        GUILayout.MinHeight(ButtonMinHeight),
+                        GUILayout.ExpandWidth(true));
+                }
+                finally
+                {
+                    GUI.backgroundColor = previousColor;
+                }
             }
-
-            try
-            {
-                return GUILayout.Button(
-                    button.Label,
-                    _wrappedButtonStyle,
-                    GUILayout.MinHeight(ButtonMinHeight),
-                    GUILayout.ExpandWidth(true));
-            }
-            finally
-            {
-                GUI.backgroundColor = previousColor;
-            }
-        }
-
-        private string InstallRequiredComponents()
-        {
-            var log = new StringBuilder();
-            var hasWork = false;
-
-            if (!_cliStatus.cliInstalled)
-            {
-                AppendInstallResult(log, "CLI", CliInstallationService.InstallCli());
-                hasWork = true;
-            }
-
-            if (NeedsInstall(_codexSkills))
-            {
-                AppendInstallResult(log, "Codex Skills", SkillInstallationService.Install(SkillAgentTarget.Codex));
-                hasWork = true;
-            }
-
-            if (NeedsInstall(_claudeSkills))
-            {
-                AppendInstallResult(log, "Claude Code Skills", SkillInstallationService.Install(SkillAgentTarget.ClaudeCode));
-                hasWork = true;
-            }
-
-            return hasWork
-                ? log.ToString().Trim()
-                : "All required CLI and skill components are already installed.";
-        }
-
-        private bool AreRequiredComponentsInstalled()
-        {
-            return _cliStatus.cliInstalled && IsInstalled(_codexSkills.state) && IsInstalled(_claudeSkills.state);
-        }
-
-        private static bool NeedsInstall(SkillInstallStatus status)
-        {
-            return status.state != SkillInstallState.Installed;
-        }
-
-        private static void AppendInstallResult(StringBuilder log, string title, string result)
-        {
-            if (log.Length > 0)
-            {
-                log.AppendLine();
-                log.AppendLine();
-            }
-
-            log.AppendLine(title);
-            log.AppendLine(result);
         }
 
         private static bool IsInstalled(SkillInstallState state)

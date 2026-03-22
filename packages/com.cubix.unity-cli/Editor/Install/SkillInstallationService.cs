@@ -35,6 +35,9 @@ namespace Cubix.UnityCli
     {
         public SkillAgentTarget target;
         public string rootPath;
+        public bool agentAvailable;
+        public string agentName;
+        public string agentLocation;
         public SkillInstallState state;
         public List<SkillFolderStatus> skills = new List<SkillFolderStatus>();
     }
@@ -52,7 +55,10 @@ namespace Cubix.UnityCli
             var status = new SkillInstallStatus
             {
                 target = target,
-                rootPath = GetDestinationRoot(target)
+                rootPath = GetDestinationRoot(target),
+                agentName = GetAgentDisplayName(target),
+                agentAvailable = TryLocateAgent(target, out var agentLocation),
+                agentLocation = agentLocation
             };
 
             foreach (var skillName in SkillNames)
@@ -166,6 +172,11 @@ namespace Cubix.UnityCli
             return Path.Combine(PackageLayout.SkillsPayloadDirectory, targetName, skillName);
         }
 
+        private static string GetAgentDisplayName(SkillAgentTarget target)
+        {
+            return target == SkillAgentTarget.Codex ? "Codex" : "Claude Code";
+        }
+
         private static string GetDestinationRoot(SkillAgentTarget target)
         {
             if (target == SkillAgentTarget.Codex)
@@ -174,6 +185,105 @@ namespace Cubix.UnityCli
             }
 
             return Path.Combine(ConnectorPaths.ProjectPath, ".claude", "skills");
+        }
+
+        private static bool TryLocateAgent(SkillAgentTarget target, out string location)
+        {
+            var commandCandidates = target == SkillAgentTarget.Codex
+                ? new[] { "codex" }
+                : new[] { "claude", "claude-code" };
+
+            if (TryFindOnPath(commandCandidates, out location))
+            {
+                return true;
+            }
+
+            var fallbackPath = target == SkillAgentTarget.Codex
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex")
+                : Path.Combine(ConnectorPaths.ProjectPath, ".claude");
+
+            if (Directory.Exists(fallbackPath))
+            {
+                location = fallbackPath;
+                return true;
+            }
+
+            location = null;
+            return false;
+        }
+
+        private static bool TryFindOnPath(IEnumerable<string> commandNames, out string location)
+        {
+            location = null;
+            var pathValue = Environment.GetEnvironmentVariable("PATH");
+            if (string.IsNullOrWhiteSpace(pathValue))
+            {
+                return false;
+            }
+
+            var extensions = GetExecutableExtensions();
+            foreach (var directory in pathValue.Split(Path.PathSeparator))
+            {
+                if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+                {
+                    continue;
+                }
+
+                foreach (var commandName in commandNames)
+                {
+                    foreach (var candidate in ExpandExecutableNames(commandName, extensions))
+                    {
+                        var fullPath = Path.Combine(directory.Trim(), candidate);
+                        if (File.Exists(fullPath))
+                        {
+                            location = fullPath;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static IEnumerable<string> ExpandExecutableNames(string commandName, IEnumerable<string> extensions)
+        {
+            if (Path.HasExtension(commandName))
+            {
+                yield return commandName;
+                yield break;
+            }
+
+            foreach (var extension in extensions)
+            {
+                yield return commandName + extension;
+            }
+        }
+
+        private static IEnumerable<string> GetExecutableExtensions()
+        {
+            if (Path.PathSeparator != ';')
+            {
+                yield return string.Empty;
+                yield break;
+            }
+
+            var pathExt = Environment.GetEnvironmentVariable("PATHEXT");
+            if (string.IsNullOrWhiteSpace(pathExt))
+            {
+                yield return ".exe";
+                yield return ".cmd";
+                yield return ".bat";
+                yield break;
+            }
+
+            foreach (var extension in pathExt.Split(';'))
+            {
+                if (!string.IsNullOrWhiteSpace(extension))
+                {
+                    yield return extension.ToLowerInvariant();
+                }
+            }
         }
 
         private static SkillInstallState DeriveOverallState(IEnumerable<SkillFolderStatus> skills)
