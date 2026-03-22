@@ -28,11 +28,16 @@ namespace Cubix.UnityCli
         {
             public string name;
             public string fullName;
+            public string testName;
+            public string fixtureName;
+            public string assemblyName;
             public string resultState;
+            public string outcome;
             public string output;
             public string message;
             public string stackTrace;
             public double durationSeconds;
+            public long durationMs;
             public List<string> categories = new List<string>();
         }
 
@@ -48,6 +53,7 @@ namespace Cubix.UnityCli
             public int timeoutMs;
             public bool? success;
             public string message;
+            public string failureType;
             public string resultsPath;
             public int totalCount;
             public int completedCount;
@@ -56,6 +62,7 @@ namespace Cubix.UnityCli
             public int skippedCount;
             public int inconclusiveCount;
             public double durationSeconds;
+            public List<CompilationAwaiter.CompilerMessageRecord> compilerErrors = new List<CompilationAwaiter.CompilerMessageRecord>();
             public TestFilterRecord filter = new TestFilterRecord();
             public List<TestCaseResultRecord> failures = new List<TestCaseResultRecord>();
         }
@@ -105,12 +112,12 @@ namespace Cubix.UnityCli
 
             SaveTestJob(record);
             Pump();
-            return record;
+            return BuildTestState(LoadTestJob() ?? record);
         }
 
         public static object GetCurrentJob()
         {
-            return RefreshCurrentJobState(allowStart: false);
+            return BuildTestState(RefreshCurrentJobState(allowStart: false));
         }
 
         public static bool HasPendingRun()
@@ -187,6 +194,7 @@ namespace Cubix.UnityCli
 
             record.state = "timed_out";
             record.success = false;
+            record.failureType = "timeout";
             record.message = "Test run timed out while waiting for completion.";
             record.updatedAtUtc = DateTime.UtcNow.ToString("o");
             SaveTestJob(record);
@@ -237,7 +245,22 @@ namespace Cubix.UnityCli
         {
             try
             {
+                var compilerErrors = CompilationAwaiter.GetCompilerMessages("error").ToList();
+                if (compilerErrors.Count > 0)
+                {
+                    record.state = "failed";
+                    record.success = false;
+                    record.failureType = "compiler";
+                    record.compilerErrors = compilerErrors;
+                    record.message = "Unity has compiler errors. Run verify and fix compilation before starting tests.";
+                    record.updatedAtUtc = DateTime.UtcNow.ToString("o");
+                    SaveTestJob(record);
+                    return;
+                }
+
                 record.state = "running";
+                record.failureType = null;
+                record.compilerErrors = new List<CompilationAwaiter.CompilerMessageRecord>();
                 record.message = "Starting the Unity test run.";
                 record.updatedAtUtc = DateTime.UtcNow.ToString("o");
                 SaveTestJob(record);
@@ -264,8 +287,11 @@ namespace Cubix.UnityCli
             }
             catch (Exception exception)
             {
+                var compilerErrors = CompilationAwaiter.GetCompilerMessages("error").ToList();
                 record.state = "failed";
                 record.success = false;
+                record.failureType = compilerErrors.Count > 0 ? "compiler" : "infrastructure";
+                record.compilerErrors = compilerErrors;
                 record.message = "Could not start the Unity test run: " + exception.Message;
                 record.updatedAtUtc = DateTime.UtcNow.ToString("o");
                 SaveTestJob(record);
@@ -420,6 +446,8 @@ namespace Cubix.UnityCli
             record.failedCount = 0;
             record.skippedCount = 0;
             record.inconclusiveCount = 0;
+            record.failureType = null;
+            record.compilerErrors = new List<CompilationAwaiter.CompilerMessageRecord>();
             record.failures = new List<TestCaseResultRecord>();
             record.message = record.totalCount > 0
                 ? "Unity test run started (" + record.totalCount + " test cases)."
@@ -490,15 +518,38 @@ namespace Cubix.UnityCli
 
             if (!string.Equals(record.state, "timed_out", StringComparison.OrdinalIgnoreCase))
             {
-                var passed = result != null && result.FailCount == 0;
-                record.success = passed;
-                record.state = passed ? "completed" : "failed";
-                record.message = passed
-                    ? "Unity tests completed without failing test cases."
-                    : "Unity tests completed with failing test cases.";
+                if (result == null)
+                {
+                    record.success = false;
+                    record.state = "failed";
+                    record.failureType = "infrastructure";
+                    record.message = "Unity test run finished without a result payload.";
+                }
+                else
+                {
+                    var outcome = GetResultBucket(result.ResultState);
+                    if (string.Equals(outcome, "canceled", StringComparison.OrdinalIgnoreCase))
+                    {
+                        record.success = false;
+                        record.state = "canceled";
+                        record.failureType = "canceled";
+                        record.message = "Unity tests were canceled before completion.";
+                    }
+                    else
+                    {
+                        var passed = result.FailCount == 0;
+                        record.success = passed;
+                        record.state = "completed";
+                        record.failureType = passed ? null : "test";
+                        record.message = passed
+                            ? "Unity tests completed without failing test cases."
+                            : "Unity tests completed with failing test cases.";
+                    }
+                }
             }
             else
             {
+                record.failureType = "timeout";
                 record.message = "Unity tests exceeded the configured timeout before completion.";
             }
 
@@ -523,6 +574,12 @@ namespace Cubix.UnityCli
             if (normalized.StartsWith("Skipped", StringComparison.OrdinalIgnoreCase))
             {
                 return "skipped";
+            }
+
+            if (normalized.StartsWith("Cancelled", StringComparison.OrdinalIgnoreCase) ||
+                normalized.StartsWith("Canceled", StringComparison.OrdinalIgnoreCase))
+            {
+                return "canceled";
             }
 
             return "inconclusive";
@@ -565,12 +622,138 @@ namespace Cubix.UnityCli
             {
                 name = result.Name,
                 fullName = result.FullName,
+                testName = result.Name,
+                fixtureName = GetFixtureName(result),
+                assemblyName = GetAssemblyName(result),
                 resultState = result.ResultState,
+                outcome = GetResultBucket(result.ResultState),
                 output = result.Output,
                 message = result.Message,
                 stackTrace = result.StackTrace,
                 durationSeconds = result.Duration,
+                durationMs = ToDurationMs(result.Duration),
                 categories = result.Test?.Categories?.Where(category => !string.IsNullOrWhiteSpace(category)).ToList() ?? new List<string>()
+            };
+        }
+
+        private static string GetFixtureName(ITestResultAdaptor result)
+        {
+            var test = result?.Test;
+            var fixtureName = ReadStringProperty(test, "ClassName");
+            if (!string.IsNullOrWhiteSpace(fixtureName))
+            {
+                return fixtureName;
+            }
+
+            return GetFixtureNameFromFullName(result?.FullName);
+        }
+
+        private static string GetAssemblyName(ITestResultAdaptor result)
+        {
+            var test = result?.Test;
+            return FirstNonEmpty(
+                ReadStringProperty(test, "AssemblyName"),
+                ReadStringProperty(result, "AssemblyName"));
+        }
+
+        private static string GetFixtureNameFromFullName(string fullName)
+        {
+            if (string.IsNullOrWhiteSpace(fullName))
+            {
+                return null;
+            }
+
+            var lastSeparator = fullName.LastIndexOf('.');
+            if (lastSeparator <= 0)
+            {
+                return fullName;
+            }
+
+            return fullName.Substring(0, lastSeparator);
+        }
+
+        private static string ReadStringProperty(object instance, string propertyName)
+        {
+            if (instance == null || string.IsNullOrWhiteSpace(propertyName))
+            {
+                return null;
+            }
+
+            var property = instance.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (property == null || property.PropertyType != typeof(string))
+            {
+                return null;
+            }
+
+            return property.GetValue(instance) as string;
+        }
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            return null;
+        }
+
+        private static long ToDurationMs(double durationSeconds)
+        {
+            return (long)Math.Round(Math.Max(0.0, durationSeconds) * 1000.0);
+        }
+
+        private static object BuildTestState(TestJobRecord record)
+        {
+            if (record == null)
+            {
+                return null;
+            }
+
+            return new
+            {
+                id = record.id,
+                runnerJobId = record.runnerJobId,
+                state = record.state,
+                platform = record.platform,
+                startedAtUtc = record.startedAtUtc,
+                updatedAtUtc = record.updatedAtUtc,
+                timeoutMs = record.timeoutMs,
+                success = record.success,
+                message = record.message,
+                failureType = record.failureType,
+                resultsPath = record.resultsPath,
+                totalCount = record.totalCount,
+                completedCount = record.completedCount,
+                passedCount = record.passedCount,
+                failedCount = record.failedCount,
+                skippedCount = record.skippedCount,
+                inconclusiveCount = record.inconclusiveCount,
+                durationSeconds = record.durationSeconds,
+                durationMs = ToDurationMs(record.durationSeconds),
+                summary = new
+                {
+                    total = record.totalCount,
+                    completed = record.completedCount,
+                    passed = record.passedCount,
+                    failed = record.failedCount,
+                    skipped = record.skippedCount,
+                    inconclusive = record.inconclusiveCount,
+                    durationMs = ToDurationMs(record.durationSeconds),
+                    totalCount = record.totalCount,
+                    completedCount = record.completedCount,
+                    passedCount = record.passedCount,
+                    failedCount = record.failedCount,
+                    skippedCount = record.skippedCount,
+                    inconclusiveCount = record.inconclusiveCount,
+                    durationSeconds = record.durationSeconds
+                },
+                filter = record.filter,
+                compilerErrors = record.compilerErrors ?? new List<CompilationAwaiter.CompilerMessageRecord>(),
+                failures = record.failures ?? new List<TestCaseResultRecord>()
             };
         }
 
@@ -600,9 +783,18 @@ namespace Cubix.UnityCli
                     updatedAtUtc = record.updatedAtUtc,
                     timeoutMs = record.timeoutMs,
                     message = record.message,
+                    failureType = record.failureType,
                     resultsPath = record.resultsPath,
+                    durationMs = ToDurationMs(record.durationSeconds),
                     summary = new
                     {
+                        total = record.totalCount,
+                        completed = record.completedCount,
+                        passed = record.passedCount,
+                        failed = record.failedCount,
+                        skipped = record.skippedCount,
+                        inconclusive = record.inconclusiveCount,
+                        durationMs = ToDurationMs(record.durationSeconds),
                         totalCount = record.totalCount,
                         completedCount = record.completedCount,
                         passedCount = record.passedCount,
@@ -612,6 +804,7 @@ namespace Cubix.UnityCli
                         durationSeconds = record.durationSeconds
                     },
                     filter = record.filter,
+                    compilerErrors = record.compilerErrors ?? new List<CompilationAwaiter.CompilerMessageRecord>(),
                     failures = record.failures,
                     tests = result != null ? CollectLeafResults(result) : new List<TestCaseResultRecord>()
                 };

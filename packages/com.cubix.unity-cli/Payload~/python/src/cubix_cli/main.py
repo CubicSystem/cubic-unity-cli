@@ -270,6 +270,23 @@ def build_idle_test_state() -> Dict[str, Any]:
         "state": "idle",
         "success": None,
         "message": "No Unity test run has been recorded.",
+        "failureType": None,
+        "summary": {
+            "total": 0,
+            "completed": 0,
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "inconclusive": 0,
+            "durationMs": 0,
+            "totalCount": 0,
+            "completedCount": 0,
+            "passedCount": 0,
+            "failedCount": 0,
+            "skippedCount": 0,
+            "inconclusiveCount": 0,
+            "durationSeconds": 0.0,
+        },
     }
 
 
@@ -279,7 +296,7 @@ def get_test_state_from_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def is_terminal_test_state(test_state: Dict[str, Any]) -> bool:
-    return test_state.get("success") is not None or test_state.get("state") in {"completed", "failed", "timed_out"}
+    return test_state.get("success") is not None or test_state.get("state") in {"completed", "failed", "timed_out", "canceled"}
 
 
 def wait_for_test(args: argparse.Namespace, job_id: str, timeout_seconds: float) -> Dict[str, Any]:
@@ -305,6 +322,8 @@ def wait_for_test(args: argparse.Namespace, job_id: str, timeout_seconds: float)
         "Timed out while waiting for Unity test status." + (f" Last connector error: {last_error}" if last_error else ""),
     )
     last_state.setdefault("state", "timed_out")
+    last_state.setdefault("failureType", "timeout")
+    last_state.setdefault("summary", build_idle_test_state()["summary"])
     return last_state
 
 
@@ -393,11 +412,11 @@ def handle_test_run(args: argparse.Namespace) -> int:
             "test.run",
             {
                 "platform": args.platform,
-                "assemblyNames": args.assemblies or [],
-                "categoryNames": args.categories or [],
-                "testNames": args.filters or [],
+                "assemblyNames": args.assembly_names or [],
+                "categoryNames": args.category_names or [],
+                "testNames": args.test_names or [],
                 "timeoutMs": args.timeout_ms,
-                "resultsPath": resolve_results_path(args.results),
+                "resultsPath": resolve_results_path(args.results_path),
             },
         )
         data = response["data"]
@@ -864,12 +883,12 @@ def build_parser() -> argparse.ArgumentParser:
     test_sub = test.add_subparsers(dest="command_action", required=True)
     test_run = test_sub.add_parser("run")
     test_run.add_argument("--platform", required=True, choices=["EditMode", "PlayMode"])
-    test_run.add_argument("--assembly", dest="assemblies", action="append")
-    test_run.add_argument("--category", dest="categories", action="append")
-    test_run.add_argument("--filter", dest="filters", action="append")
-    test_run.add_argument("--results")
-    test_run.add_argument("--timeout-ms", dest="timeout_ms", type=int, default=DEFAULT_TEST_TIMEOUT_MS)
-    test_run.add_argument("--ready-timeout-ms", dest="ready_timeout_ms", type=int, default=DEFAULT_STATUS_TIMEOUT_MS)
+    test_run.add_argument("--assembly", "--assembly-names", "--assemblyNames", dest="assembly_names", action="append")
+    test_run.add_argument("--category", "--category-names", "--categoryNames", dest="category_names", action="append")
+    test_run.add_argument("--filter", "--test-name", "--testNames", dest="test_names", action="append")
+    test_run.add_argument("--results", "--results-path", "--resultsPath", dest="results_path")
+    test_run.add_argument("--timeout-ms", "--timeoutMs", dest="timeout_ms", type=int, default=DEFAULT_TEST_TIMEOUT_MS)
+    test_run.add_argument("--ready-timeout-ms", "--readyTimeoutMs", dest="ready_timeout_ms", type=int, default=DEFAULT_STATUS_TIMEOUT_MS)
     test_run.set_defaults(handler=handle_test_run)
     test_status = test_sub.add_parser("status")
     test_status.set_defaults(handler=handle_test_status)
