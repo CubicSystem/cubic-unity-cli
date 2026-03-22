@@ -8,6 +8,7 @@ namespace Cubix.UnityCli
     {
         private static readonly Color SuccessColor = new Color(0.28f, 0.68f, 0.34f);
         private static readonly Color FailureColor = new Color(0.82f, 0.34f, 0.34f);
+        private static readonly Color SeparatorColor = new Color(0.35f, 0.35f, 0.35f, 0.35f);
         private const float ButtonMinHeight = 24f;
 
         private Vector2 _scrollPosition;
@@ -19,6 +20,9 @@ namespace Cubix.UnityCli
         private GUIStyle _wrappedStatusStyle;
         private GUIStyle _wrappedTextAreaStyle;
         private GUIStyle _wrappedButtonStyle;
+        private GUIStyle _sectionBoxStyle;
+        private GUIStyle _sectionTitleStyle;
+        private GUIStyle _sectionBodyBoxStyle;
 
         private sealed class ButtonDefinition
         {
@@ -60,13 +64,13 @@ namespace Cubix.UnityCli
             {
                 _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
                 DrawHeader();
-                EditorGUILayout.Space(8f);
+                EditorGUILayout.Space(10f);
                 DrawConnectionSection();
-                EditorGUILayout.Space(8f);
+                EditorGUILayout.Space(10f);
                 DrawCliSection();
-                EditorGUILayout.Space(8f);
+                EditorGUILayout.Space(10f);
                 DrawSkillsSection();
-                EditorGUILayout.Space(8f);
+                EditorGUILayout.Space(10f);
                 DrawActionLog();
                 EditorGUILayout.EndScrollView();
             }
@@ -78,16 +82,20 @@ namespace Cubix.UnityCli
 
         private void DrawHeader()
         {
-            EditorGUILayout.LabelField("Cubix Unity CLI", EditorStyles.boldLabel);
-            DrawWrappedRow("Package Version", PackageLayout.PackageVersion);
-            DrawWrappedRow("Package Root", PackageLayout.PackageRoot);
+            using (new EditorGUILayout.VerticalScope(_sectionBoxStyle))
+            {
+                EditorGUILayout.LabelField("Cubix Unity CLI", _sectionTitleStyle);
+                DrawSectionDivider();
+                EditorGUILayout.Space(4f);
+                DrawWrappedRow("Package Version", PackageLayout.PackageVersion);
+                DrawWrappedRow("Package Root", PackageLayout.PackageRoot);
+            }
         }
 
         private void DrawConnectionSection()
         {
-            using (new EditorGUILayout.VerticalScope("box"))
+            DrawSection("Connection", () =>
             {
-                EditorGUILayout.LabelField("Connection", EditorStyles.boldLabel);
                 var snapshot = ConnectionService.GetSnapshot();
                 DrawStateRow("Connected", snapshot.connected);
                 DrawWrappedRow("Port", snapshot.port > 0 ? snapshot.port.ToString() : "-");
@@ -114,14 +122,13 @@ namespace Cubix.UnityCli
                         RefreshAll();
                     }, null, snapshot.connected)
                 );
-            }
+            });
         }
 
         private void DrawCliSection()
         {
-            using (new EditorGUILayout.VerticalScope("box"))
+            DrawSection("CLI", () =>
             {
-                EditorGUILayout.LabelField("CLI", EditorStyles.boldLabel);
                 DrawColoredRow("Python", _cliStatus.pythonAvailable ? _cliStatus.pythonVersion : "Missing", _cliStatus.pythonAvailable);
                 DrawColoredRow("pip", _cliStatus.pipAvailable ? _cliStatus.pipVersion : "Missing", _cliStatus.pipAvailable);
                 DrawColoredRow("pipx", _cliStatus.pipxAvailable ? _cliStatus.pipxVersion : "Missing", _cliStatus.pipxAvailable);
@@ -139,60 +146,71 @@ namespace Cubix.UnityCli
                         LogAction("Copied diagnostics to the clipboard.");
                     })
                 );
-            }
+            });
         }
 
         private void DrawSkillsSection()
         {
-            using (new EditorGUILayout.VerticalScope("box"))
+            DrawSection("Skills", () =>
             {
-                EditorGUILayout.LabelField("Skills", EditorStyles.boldLabel);
-                DrawSkillStatus("Codex", _codexSkills);
-                DrawSkillStatus("Claude Code", _claudeSkills);
-
-                DrawButtonGrid(
+                DrawSkillGroup(
+                    "Codex",
+                    _codexSkills,
                     new ButtonDefinition(
                         IsInstalled(_codexSkills.state) ? "Uninstall Codex Skills" : "Install Codex Skills",
                         () => RunInstallAction(IsInstalled(_codexSkills.state)
                             ? SkillInstallationService.Remove(SkillAgentTarget.Codex)
                             : SkillInstallationService.Install(SkillAgentTarget.Codex)),
                         IsInstalled(_codexSkills.state) ? SuccessColor : FailureColor,
-                        IsInstalled(_codexSkills.state) || _codexSkills.agentAvailable),
+                        IsInstalled(_codexSkills.state) || _codexSkills.agentAvailable));
+
+                EditorGUILayout.Space(8f);
+
+                DrawSkillGroup(
+                    "Claude Code",
+                    _claudeSkills,
                     new ButtonDefinition(
                         IsInstalled(_claudeSkills.state) ? "Uninstall Claude Code Skills" : "Install Claude Code Skills",
                         () => RunInstallAction(IsInstalled(_claudeSkills.state)
                             ? SkillInstallationService.Remove(SkillAgentTarget.ClaudeCode)
                             : SkillInstallationService.Install(SkillAgentTarget.ClaudeCode)),
                         IsInstalled(_claudeSkills.state) ? SuccessColor : FailureColor,
-                        IsInstalled(_claudeSkills.state) || _claudeSkills.agentAvailable)
-                );
-            }
+                        IsInstalled(_claudeSkills.state) || _claudeSkills.agentAvailable));
+            });
         }
 
-        private void DrawSkillStatus(string label, SkillInstallStatus status)
+        private void DrawSkillGroup(string label, SkillInstallStatus status, ButtonDefinition actionButton)
         {
-            DrawColoredRow(label, status.state.ToString(), IsInstalled(status.state));
-            DrawColoredRow(label + " App", status.agentAvailable ? "Detected" : "Not Detected", status.agentAvailable);
-            DrawWrappedRow(label + " App Path", status.agentLocation);
-            DrawWrappedRow(label + " Path", status.rootPath);
-            foreach (var skill in status.skills)
+            using (new EditorGUILayout.VerticalScope(_sectionBodyBoxStyle))
             {
-                var detail = skill.state + (string.IsNullOrWhiteSpace(skill.installedVersion) ? string.Empty : " (" + skill.installedVersion + ")");
-                DrawColoredRow("  " + skill.name, detail, skill.state == SkillInstallState.Installed);
+                EditorGUILayout.LabelField(label, EditorStyles.boldLabel);
+                DrawSectionDivider();
+                EditorGUILayout.Space(3f);
+                DrawColoredRow("Status", status.state.ToString(), IsInstalled(status.state));
+                DrawColoredRow("App", status.agentAvailable ? "Detected" : "Not Detected", status.agentAvailable);
+                DrawWrappedRow("App Path", status.agentLocation);
+                DrawWrappedRow("Skills Path", status.rootPath);
+                foreach (var skill in status.skills)
+                {
+                    var detail = skill.state + (string.IsNullOrWhiteSpace(skill.installedVersion) ? string.Empty : " (" + skill.installedVersion + ")");
+                    DrawColoredRow("  " + skill.name, detail, skill.state == SkillInstallState.Installed);
+                }
+
+                EditorGUILayout.Space(6f);
+                DrawButtonGrid(actionButton);
             }
         }
 
         private void DrawActionLog()
         {
-            using (new EditorGUILayout.VerticalScope("box"))
+            DrawSection("Action Log", () =>
             {
-                EditorGUILayout.LabelField("Action Log", EditorStyles.boldLabel);
                 EditorGUILayout.TextArea(
                     string.IsNullOrWhiteSpace(_actionLog) ? "No actions yet." : _actionLog,
                     _wrappedTextAreaStyle,
                     GUILayout.MinHeight(180f),
                     GUILayout.ExpandWidth(true));
-            }
+            });
         }
 
         private void RefreshAll()
@@ -289,6 +307,49 @@ namespace Cubix.UnityCli
                     alignment = TextAnchor.MiddleCenter
                 };
             }
+
+            if (_sectionBoxStyle == null)
+            {
+                _sectionBoxStyle = new GUIStyle(EditorStyles.helpBox)
+                {
+                    padding = new RectOffset(12, 12, 10, 12),
+                    margin = new RectOffset(0, 0, 0, 0)
+                };
+            }
+
+            if (_sectionTitleStyle == null)
+            {
+                _sectionTitleStyle = new GUIStyle(EditorStyles.boldLabel)
+                {
+                    fontSize = 12
+                };
+            }
+
+            if (_sectionBodyBoxStyle == null)
+            {
+                _sectionBodyBoxStyle = new GUIStyle(EditorStyles.helpBox)
+                {
+                    padding = new RectOffset(10, 10, 8, 10),
+                    margin = new RectOffset(0, 0, 0, 0)
+                };
+            }
+        }
+
+        private void DrawSection(string title, System.Action content)
+        {
+            using (new EditorGUILayout.VerticalScope(_sectionBoxStyle))
+            {
+                EditorGUILayout.LabelField(title, _sectionTitleStyle);
+                DrawSectionDivider();
+                EditorGUILayout.Space(4f);
+                content();
+            }
+        }
+
+        private void DrawSectionDivider()
+        {
+            var rect = EditorGUILayout.GetControlRect(false, 1f);
+            EditorGUI.DrawRect(rect, SeparatorColor);
         }
 
         private void DrawStateRow(string label, bool isActive)
