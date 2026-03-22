@@ -32,11 +32,18 @@ namespace Cubix.UnityCli
         public bool pipAvailable;
         public bool pipxAvailable;
         public bool cliInstalled;
+        public bool cliVersionMatches;
+        public bool cliCommandAvailable;
+        public bool cliCommandVersionMatches;
+        public bool cliSupportsTestTopLevel;
         public string pythonCommand;
         public string pythonVersion;
         public string pipVersion;
         public string pipxVersion;
+        public string expectedCliVersion;
         public string cliVersion;
+        public string cliCommandVersion;
+        public string cliCommandCheckMessage;
         public string diagnostics;
     }
 
@@ -46,7 +53,10 @@ namespace Cubix.UnityCli
 
         public static CliInstallationStatus Inspect()
         {
-            var status = new CliInstallationStatus();
+            var status = new CliInstallationStatus
+            {
+                expectedCliVersion = PackageLayout.PackageVersion
+            };
             var diagnostics = new StringBuilder();
 
             if (!TryResolvePython(out var python, out var pythonVersion))
@@ -77,10 +87,39 @@ namespace Cubix.UnityCli
                 {
                     status.cliInstalled = true;
                     status.cliVersion = cliVersion;
+                    status.cliVersionMatches = VersionsMatch(cliVersion, status.expectedCliVersion);
                 }
             }
 
-            diagnostics.AppendLine("cubix-cli: " + (status.cliInstalled ? status.cliVersion ?? "installed" : "missing"));
+            if (TryResolveCliCommand(out var cliCommand, out var cliCommandVersion, out var cliCommandCheckMessage))
+            {
+                status.cliCommandAvailable = true;
+                status.cliCommandVersion = cliCommandVersion;
+                status.cliCommandVersionMatches = VersionsMatch(cliCommandVersion, status.expectedCliVersion);
+
+                var testParserCheck = Run(cliCommand, "test status --help");
+                status.cliSupportsTestTopLevel = testParserCheck.Success;
+                status.cliCommandCheckMessage = FirstMeaningfulLine(
+                    testParserCheck.Success ? testParserCheck.StdOut : testParserCheck.StdErr,
+                    testParserCheck.Success ? null : testParserCheck.StdOut,
+                    cliCommandCheckMessage);
+            }
+            else
+            {
+                status.cliCommandCheckMessage = cliCommandCheckMessage;
+            }
+
+            diagnostics.AppendLine("Expected CLI payload: " + status.expectedCliVersion);
+            diagnostics.AppendLine("cubix-cli package: " + (status.cliInstalled ? status.cliVersion ?? "installed" : "missing"));
+            diagnostics.AppendLine("Package matches payload: " + (status.cliVersionMatches ? "yes" : "no"));
+            diagnostics.AppendLine("cubix-cli command: " + (status.cliCommandAvailable ? status.cliCommandVersion ?? "available" : "missing"));
+            diagnostics.AppendLine("Command matches payload: " + (status.cliCommandVersionMatches ? "yes" : "no"));
+            diagnostics.AppendLine("Top-level test parser: " + (status.cliSupportsTestTopLevel ? "supported" : "missing"));
+            if (!string.IsNullOrWhiteSpace(status.cliCommandCheckMessage))
+            {
+                diagnostics.AppendLine("CLI self-check: " + status.cliCommandCheckMessage);
+            }
+
             status.diagnostics = diagnostics.ToString().Trim();
             return status;
         }
@@ -287,6 +326,59 @@ namespace Cubix.UnityCli
             }
         }
 
+        private static bool TryResolveCliCommand(out CommandSpec cliCommand, out string version, out string message)
+        {
+            cliCommand = new CommandSpec
+            {
+                FileName = "cubix-cli",
+                PrefixArguments = string.Empty
+            };
+
+            var result = Run(cliCommand, "--version");
+            message = FirstMeaningfulLine(result.StdOut, result.StdErr);
+            if (!result.Success)
+            {
+                version = null;
+                cliCommand = null;
+                return false;
+            }
+
+            version = ParseCliCommandVersion(result.StdOut, result.StdErr);
+            return true;
+        }
+
+        private static string ParseCliCommandVersion(params string[] outputs)
+        {
+            var line = FirstMeaningfulLine(outputs);
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                return null;
+            }
+
+            foreach (var token in line.Split(new[] { ' ', '\t', ',', ';', '=' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var candidate = token.Trim().Trim('"', '\'', '(', ')', '[', ']', '{', '}');
+                if (Version.TryParse(candidate, out _))
+                {
+                    return candidate;
+                }
+            }
+
+            return line.Trim();
+        }
+
+        private static bool VersionsMatch(string left, string right)
+        {
+            var normalizedLeft = ParseCliCommandVersion(left);
+            var normalizedRight = ParseCliCommandVersion(right);
+            if (string.IsNullOrWhiteSpace(normalizedLeft) || string.IsNullOrWhiteSpace(normalizedRight))
+            {
+                return false;
+            }
+
+            return string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
+        }
+
         private static ProcessResult RunPython(CommandSpec python, string additionalArguments)
         {
             return Run(python, python.BuildArguments(additionalArguments), true);
@@ -318,6 +410,20 @@ namespace Cubix.UnityCli
             }
 
             return builder.ToString().Trim();
+        }
+
+        private static string FirstMeaningfulLine(params string[] values)
+        {
+            foreach (var value in values)
+            {
+                var line = FirstLine(value);
+                if (!string.IsNullOrWhiteSpace(line))
+                {
+                    return line;
+                }
+            }
+
+            return null;
         }
 
         private static string FirstLine(string value)

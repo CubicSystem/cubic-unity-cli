@@ -129,17 +129,21 @@ namespace Cubix.UnityCli
         {
             DrawSection("CLI", () =>
             {
+                var cliNeedsAttention = CliNeedsAttention();
                 DrawColoredRow("Python", _cliStatus.pythonAvailable ? _cliStatus.pythonVersion : "Missing", _cliStatus.pythonAvailable);
                 DrawColoredRow("pip", _cliStatus.pipAvailable ? _cliStatus.pipVersion : "Missing", _cliStatus.pipAvailable);
                 DrawColoredRow("pipx", _cliStatus.pipxAvailable ? _cliStatus.pipxVersion : "Missing", _cliStatus.pipxAvailable);
-                DrawColoredRow("cubix-cli", _cliStatus.cliInstalled ? _cliStatus.cliVersion ?? "Installed" : "Missing", _cliStatus.cliInstalled);
+                DrawWrappedRow("Expected CLI", _cliStatus.expectedCliVersion);
+                DrawColoredRow("cubix-cli Package", BuildCliPackageLabel(), _cliStatus.cliInstalled && _cliStatus.cliVersionMatches);
+                DrawColoredRow("cubix-cli Command", BuildCliCommandLabel(), _cliStatus.cliCommandAvailable && _cliStatus.cliCommandVersionMatches);
+                DrawStateRow("Top-level Test", _cliStatus.cliSupportsTestTopLevel);
                 EditorGUILayout.HelpBox(BuildCliDiagnosticsText(), MessageType.None);
 
                 DrawButtonGrid(
                     new ButtonDefinition(
-                        _cliStatus.cliInstalled ? "Uninstall CLI" : "Install CLI",
-                        () => RunInstallAction(_cliStatus.cliInstalled ? CliInstallationService.UninstallCli() : CliInstallationService.InstallCli()),
-                        _cliStatus.cliInstalled ? SuccessColor : FailureColor),
+                        GetCliPrimaryActionLabel(),
+                        RunCliPrimaryAction,
+                        _cliStatus.cliInstalled && !cliNeedsAttention ? SuccessColor : FailureColor),
                     new ButtonDefinition("Copy Diagnostics", () =>
                     {
                         GUIUtility.systemCopyBuffer = BuildDiagnostics();
@@ -267,8 +271,77 @@ namespace Cubix.UnityCli
             builder.AppendLine("- safety checks: cubix-cli preflight");
             builder.AppendLine("- batch execution: cubix-cli batch");
             builder.AppendLine("- operational commands: status, menu, refresh, reserialize");
+            builder.AppendLine("- top-level tests: cubix-cli test run / cubix-cli test status");
             builder.AppendLine("- local command count: " + CommandRouter.ListCommands(includeUnsafe: true).Count);
             return builder.ToString().Trim();
+        }
+
+        private string GetCliPrimaryActionLabel()
+        {
+            if (!_cliStatus.cliInstalled)
+            {
+                return "Install CLI";
+            }
+
+            return CliNeedsAttention() ? "Reinstall CLI" : "Uninstall CLI";
+        }
+
+        private void RunCliPrimaryAction()
+        {
+            if (!_cliStatus.cliInstalled)
+            {
+                RunInstallAction(CliInstallationService.InstallCli());
+                return;
+            }
+
+            if (CliNeedsAttention())
+            {
+                RunInstallAction(CliInstallationService.UpdateCli());
+                return;
+            }
+
+            RunInstallAction(CliInstallationService.UninstallCli());
+        }
+
+        private bool CliNeedsAttention()
+        {
+            return _cliStatus.cliInstalled &&
+                   (!_cliStatus.cliVersionMatches ||
+                    !_cliStatus.cliCommandAvailable ||
+                    !_cliStatus.cliCommandVersionMatches ||
+                    !_cliStatus.cliSupportsTestTopLevel);
+        }
+
+        private string BuildCliPackageLabel()
+        {
+            if (!_cliStatus.cliInstalled)
+            {
+                return "Missing";
+            }
+
+            var version = string.IsNullOrWhiteSpace(_cliStatus.cliVersion) ? "Installed" : _cliStatus.cliVersion;
+            if (_cliStatus.cliVersionMatches)
+            {
+                return version;
+            }
+
+            return version + " (expected " + (_cliStatus.expectedCliVersion ?? "-") + ")";
+        }
+
+        private string BuildCliCommandLabel()
+        {
+            if (!_cliStatus.cliCommandAvailable)
+            {
+                return "Missing";
+            }
+
+            var version = string.IsNullOrWhiteSpace(_cliStatus.cliCommandVersion) ? "Available" : _cliStatus.cliCommandVersion;
+            if (_cliStatus.cliCommandVersionMatches)
+            {
+                return version;
+            }
+
+            return version + " (expected " + (_cliStatus.expectedCliVersion ?? "-") + ")";
         }
 
         private void EnsureStyles()
