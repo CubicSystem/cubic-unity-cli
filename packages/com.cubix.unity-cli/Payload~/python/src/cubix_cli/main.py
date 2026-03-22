@@ -14,11 +14,14 @@ from .discovery import ACTIVE_INSTANCE_MAX_AGE_SECONDS, DiscoveryError, Instance
 
 DEFAULT_STATUS_TIMEOUT_MS = 180000
 DEFAULT_VERIFY_TIMEOUT_MS = 180000
+DEFAULT_PLAYTEST_TIMEOUT_MS = 120000
+DEFAULT_PLAYTEST_DURATION_SECONDS = 5.0
 STATUS_RETRY_COUNT = 2
 STATUS_RETRY_DELAY_SECONDS = 0.5
 STATUS_FILE_MAX_AGE_SECONDS = 10.0
 STATUS_FILE_RELOADING_MAX_AGE_SECONDS = 180.0
 WAIT_LOOP_INTERVAL_SECONDS = 1.0
+PLAYTEST_POLL_INTERVAL_SECONDS = 0.5
 CONNECTOR_RESOLVE_TIMEOUT_SECONDS = 20.0
 CONNECTOR_RESOLVE_RETRY_SECONDS = 0.5
 
@@ -279,6 +282,202 @@ def find_latest_script(client: UnityClient) -> Optional[str]:
     return latest.relative_to(project_path).as_posix()
 
 
+def command_data(client: UnityClient, command: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    data = client.command(command, params or {}).get("data")
+    return data if isinstance(data, dict) else {}
+
+
+def wait_for_play_mode_state(
+    client: UnityClient,
+    desired_is_playing: bool,
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    deadline = time.monotonic() + max(timeout_seconds, 1.0)
+    last_state: Dict[str, Any] = {}
+
+    while time.monotonic() < deadline:
+        state = command_data(client, "editor.state")
+        last_state = state
+        if bool(state.get("isPlaying")) == desired_is_playing:
+            return state
+
+        time.sleep(PLAYTEST_POLL_INTERVAL_SECONDS)
+
+    return last_state
+
+
+def read_console_entries(
+    client: UnityClient,
+    level: Optional[str] = None,
+    limit: int = 20,
+    source: str = "editor",
+) -> list[Dict[str, Any]]:
+    payload: Dict[str, Any] = {"limit": limit, "source": source}
+    if level:
+        payload["level"] = level
+
+    data = command_data(client, "console.read", payload)
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        return []
+
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def handle_playtest(args: argparse.Namespace) -> int:
+    try:
+        ready_snapshot = wait_for_ready(args, args.ready_timeout_ms)
+        if not ready_snapshot.get("ready"):
+            output(
+                {
+                    "success": False,
+                    "message": ready_snapshot.get("message", "Unity is not ready for playtest."),
+                    "status": ready_snapshot,
+                },
+                args.json,
+            )
+            return 2
+
+        client = build_client(args)
+        overall_deadline = time.monotonic() + max(args.timeout_ms, 1000) / 1000.0
+
+        before_state = command_data(client, "editor.state")
+        restarted_from_playing = bool(before_state.get("isPlaying"))
+        if restarted_from_playing:
+            command_data(client, "editor.stop")
+            before_state = wait_for_play_mode_state(client, desired_is_playing=False, timeout_seconds=5.0)
+            if before_state.get("isPlaying"):
+                output(
+                    {
+                        "success": False,
+                        "stopReason": "stop_before_start_failed",
+                        "message": "Could not stop the current play mode session before starting playtest.",
+                        "editor": {"before": before_state},
+                    },
+                    args.json,
+                )
+                return 2
+
+        console_cleared = False
+        if not args.preserve_console:
+            command_data(client, "console.clear")
+            console_cleared = True
+
+        started_state = command_data(client, "editor.play")
+        entered_state = wait_for_play_mode_state(
+            client,
+            desired_is_playing=True,
+            timeout_seconds=max(min(overall_deadline - time.monotonic(), 15.0), 1.0),
+        )
+        if not entered_state.get("isPlaying"):
+            output(
+                {
+                    "success": False,
+                    "stopReason": "play_mode_start_failed",
+                    "message": "Unity did not enter play mode before the playtest timeout.",
+                    "editor": {
+                        "before": before_state,
+                        "requestedStart": started_state,
+                        "entered": entered_state,
+                    },
+                    "console": {
+                        "cleared": console_cleared,
+                        "errors": read_console_entries(client, level="error", limit=args.error_limit),
+                    },
+                },
+                args.json,
+            )
+            return 2
+
+        runtime_start = command_data(client, "runtime.state")
+        monitor_started_at = time.monotonic()
+        requested_end_at = monitor_started_at + max(args.duration_seconds, 0.0)
+
+        last_runtime_state = runtime_start
+        playtest_errors: list[Dict[str, Any]] = []
+        success = True
+        stop_reason = "duration_elapsed"
+
+        while time.monotonic() < requested_end_at:
+            if time.monotonic() >= overall_deadline:
+                success = False
+                stop_reason = "timeout"
+                break
+
+            last_runtime_state = command_data(client, "runtime.state")
+            if not last_runtime_state.get("isPlaying"):
+                success = False
+                stop_reason = "play_mode_exited"
+                break
+
+            if not args.ignore_console_errors:
+                playtest_errors = read_console_entries(client, level="error", limit=args.error_limit)
+                if playtest_errors:
+                    success = False
+                    stop_reason = "console_error"
+                    break
+
+            time.sleep(PLAYTEST_POLL_INTERVAL_SECONDS)
+
+        final_state = command_data(client, "editor.state")
+        if final_state.get("isPlaying"):
+            command_data(client, "editor.stop")
+            final_state = wait_for_play_mode_state(client, desired_is_playing=False, timeout_seconds=5.0)
+            if final_state.get("isPlaying"):
+                success = False
+                stop_reason = "stop_failed"
+
+        duration_seconds = max(time.monotonic() - monitor_started_at, 0.0)
+        start_frame = runtime_start.get("frameCount")
+        end_frame = last_runtime_state.get("frameCount")
+        frames_elapsed = (
+            end_frame - start_frame
+            if isinstance(start_frame, int) and isinstance(end_frame, int)
+            else None
+        )
+        start_realtime = runtime_start.get("realtimeSinceStartup")
+        end_realtime = last_runtime_state.get("realtimeSinceStartup")
+        realtime_elapsed = (
+            end_realtime - start_realtime
+            if isinstance(start_realtime, (int, float)) and isinstance(end_realtime, (int, float))
+            else None
+        )
+
+        result = {
+            "success": success,
+            "stopReason": stop_reason,
+            "message": (
+                "Playtest completed without runtime console errors."
+                if success
+                else "Playtest detected an issue during play mode or could not restore the editor state."
+            ),
+            "durationSecondsRequested": args.duration_seconds,
+            "durationSecondsElapsed": round(duration_seconds, 3),
+            "runtime": {
+                "start": runtime_start,
+                "end": last_runtime_state,
+                "framesElapsed": frames_elapsed,
+                "realtimeElapsed": round(realtime_elapsed, 3) if isinstance(realtime_elapsed, (int, float)) else None,
+            },
+            "editor": {
+                "before": before_state,
+                "entered": entered_state,
+                "final": final_state,
+                "restartedFromPlaying": restarted_from_playing,
+            },
+            "console": {
+                "cleared": console_cleared,
+                "errorCount": len(playtest_errors),
+                "errors": playtest_errors,
+            },
+        }
+        output(result, args.json)
+        return 0 if success else 2
+    except (DiscoveryError, ClientError) as exc:
+        output({"success": False, "message": str(exc)}, args.json)
+        return 1
+
+
 def handle_connector_command(args: argparse.Namespace) -> int:
     try:
         client = build_client(args)
@@ -498,6 +697,15 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--all", action="store_true", help="Refresh the whole AssetDatabase before verify.")
     verify.add_argument("--timeout-ms", dest="timeout_ms", type=int, default=DEFAULT_VERIFY_TIMEOUT_MS)
     verify.set_defaults(handler=handle_verify)
+
+    playtest = subparsers.add_parser("playtest", help="Run a simple Unity editor play mode smoke test.")
+    playtest.add_argument("--duration-seconds", dest="duration_seconds", type=float, default=DEFAULT_PLAYTEST_DURATION_SECONDS)
+    playtest.add_argument("--timeout-ms", dest="timeout_ms", type=int, default=DEFAULT_PLAYTEST_TIMEOUT_MS)
+    playtest.add_argument("--ready-timeout-ms", dest="ready_timeout_ms", type=int, default=DEFAULT_STATUS_TIMEOUT_MS)
+    playtest.add_argument("--error-limit", dest="error_limit", type=int, default=20)
+    playtest.add_argument("--preserve-console", action="store_true", help="Do not clear the Unity console before starting play mode.")
+    playtest.add_argument("--ignore-console-errors", action="store_true", help="Do not fail the playtest when editor console errors appear during play mode.")
+    playtest.set_defaults(handler=handle_playtest)
 
     editor = subparsers.add_parser("editor", help="Control Unity editor state.")
     editor_sub = editor.add_subparsers(dest="command_action", required=True)

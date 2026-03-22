@@ -31,4 +31,5 @@ Prefer structured commands over `cubix-cli exec csharp`:
 - `cubix-cli object create|set-active|set-parent|component-get|component-set`
 - `cubix-cli prefab instantiate|save|connect`
 - `cubix-cli reserialize Assets/...`
+- `cubix-cli playtest --duration-seconds 5`
 - `cubix-cli runtime state|inspect|mutate`
