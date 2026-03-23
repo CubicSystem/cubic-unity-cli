@@ -88,16 +88,25 @@ namespace Cubix.UnityCli
                 DrawSectionDivider();
                 EditorGUILayout.Space(4f);
                 DrawColoredRow("Loaded Package", PackageLayout.PackageVersion, !PackageLayout.HasLoadedPackageDrift);
+                DrawWrappedRow("CLI Payload", PackageLayout.CliPayloadVersion);
                 DrawWrappedRow("Loaded Root", PackageLayout.PackageRoot);
                 DrawColoredRow("Project Package", PackageLayout.ProjectPackageVersion, !PackageLayout.HasLoadedPackageDrift);
                 DrawWrappedRow("Lock Version", PackageLayout.ProjectLockPackageVersion);
                 DrawWrappedRow("Manifest Spec", PackageLayout.ProjectManifestDependencySpec);
                 DrawWrappedRow("Project Root", PackageLayout.ProjectPackageRoot);
+                DrawWrappedRow("Reload Status", PackageReloadService.StatusMessage);
                 if (PackageLayout.HasLoadedPackageDrift)
                 {
                     EditorGUILayout.HelpBox(
                         "The loaded Cubix Unity CLI package does not match the project package metadata. Unity may still be using the previous package build. Reopen the editor or force a package reload before trusting setup diagnostics.",
                         MessageType.Warning);
+                    EditorGUILayout.Space(6f);
+                    DrawButtonGrid(
+                        new ButtonDefinition(
+                            PackageReloadService.HasPendingReload ? "Reload Pending" : "Reload Package Scripts",
+                            RunPackageReloadAction,
+                            FailureColor,
+                            !PackageReloadService.HasPendingReload));
                 }
             }
         }
@@ -241,6 +250,13 @@ namespace Cubix.UnityCli
             RefreshAll();
         }
 
+        private void RunPackageReloadAction()
+        {
+            PackageReloadService.RequestReload("Queued a Cubix Unity CLI package reload from the setup window.");
+            LogAction(PackageReloadService.StatusMessage);
+            RefreshAll();
+        }
+
         private void LogAction(string message)
         {
             var entry = "[" + System.DateTime.Now.ToString("HH:mm:ss") + "] " + message;
@@ -264,12 +280,15 @@ namespace Cubix.UnityCli
             builder.AppendLine();
             builder.AppendLine("Package");
             builder.AppendLine("Loaded Version: " + PackageLayout.PackageVersion);
+            builder.AppendLine("CLI Payload Version: " + PackageLayout.CliPayloadVersion);
             builder.AppendLine("Loaded Root: " + PackageLayout.PackageRoot);
             builder.AppendLine("Project Version: " + PackageLayout.ProjectPackageVersion);
             builder.AppendLine("Lock Version: " + PackageLayout.ProjectLockPackageVersion);
             builder.AppendLine("Manifest Spec: " + PackageLayout.ProjectManifestDependencySpec);
             builder.AppendLine("Project Root: " + PackageLayout.ProjectPackageRoot);
             builder.AppendLine("Loaded Drift: " + PackageLayout.HasLoadedPackageDrift);
+            builder.AppendLine("Reload Pending: " + PackageReloadService.HasPendingReload);
+            builder.AppendLine("Reload Status: " + PackageReloadService.StatusMessage);
             builder.AppendLine();
             builder.AppendLine("CLI");
             builder.AppendLine(BuildCliDiagnosticsText());

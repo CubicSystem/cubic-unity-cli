@@ -28,6 +28,8 @@ namespace Cubix.UnityCli
 
         public static string ProjectPackageVersion => FirstNonEmpty(ProjectLockPackageVersion, NormalizeVersion(ProjectManifestDependencySpec));
 
+        public static string CliPayloadVersion => ReadCliPayloadVersion();
+
         public static bool HasLoadedPackageDrift =>
             !string.Equals(PackageVersion, ProjectPackageVersion, System.StringComparison.OrdinalIgnoreCase) ||
             (!string.IsNullOrWhiteSpace(ProjectPackageRoot) &&
@@ -86,6 +88,46 @@ namespace Cubix.UnityCli
                 {
                     return candidate;
                 }
+            }
+
+            return null;
+        }
+
+        private static string ReadCliPayloadVersion()
+        {
+            var pyprojectPath = Path.Combine(PythonPayloadDirectory, "pyproject.toml");
+            if (!File.Exists(pyprojectPath))
+            {
+                return null;
+            }
+
+            try
+            {
+                foreach (var rawLine in File.ReadAllLines(pyprojectPath))
+                {
+                    var line = rawLine?.Trim();
+                    if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#"))
+                    {
+                        continue;
+                    }
+
+                    if (!line.StartsWith("version", System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var separatorIndex = line.IndexOf('=');
+                    if (separatorIndex < 0 || separatorIndex >= line.Length - 1)
+                    {
+                        continue;
+                    }
+
+                    return NormalizeVersion(line.Substring(separatorIndex + 1));
+                }
+            }
+            catch
+            {
+                return null;
             }
 
             return null;

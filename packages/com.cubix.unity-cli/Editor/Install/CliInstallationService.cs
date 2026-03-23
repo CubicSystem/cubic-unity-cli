@@ -57,7 +57,7 @@ namespace Cubix.UnityCli
         {
             var status = new CliInstallationStatus
             {
-                expectedCliVersion = PackageLayout.PackageVersion
+                expectedCliVersion = PackageLayout.CliPayloadVersion ?? PackageLayout.PackageVersion
             };
             var diagnostics = new StringBuilder();
 
