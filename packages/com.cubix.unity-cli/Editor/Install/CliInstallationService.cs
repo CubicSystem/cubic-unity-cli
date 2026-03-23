@@ -113,11 +113,11 @@ namespace Cubix.UnityCli
                 status.cliCommandCheckMessage = cliCommandCheckMessage;
             }
 
-            diagnostics.AppendLine("Expected CLI payload: " + status.expectedCliVersion);
+            diagnostics.AppendLine("Expected CLI: " + status.expectedCliVersion);
             diagnostics.AppendLine("cubix-cli package: " + (status.cliInstalled ? status.cliVersion ?? "installed" : "missing"));
-            diagnostics.AppendLine("Package matches payload: " + (status.cliVersionMatches ? "yes" : "no"));
+            diagnostics.AppendLine("Package matches expected CLI: " + (status.cliVersionMatches ? "yes" : "no"));
             diagnostics.AppendLine("cubix-cli command: " + (status.cliCommandAvailable ? status.cliCommandVersion ?? "available" : "missing"));
-            diagnostics.AppendLine("Command matches payload: " + (status.cliCommandVersionMatches ? "yes" : "no"));
+            diagnostics.AppendLine("Command matches expected CLI: " + (status.cliCommandVersionMatches ? "yes" : "no"));
             diagnostics.AppendLine("Command path: " + (status.cliCommandAvailable ? status.cliCommandLocation ?? "-" : "missing"));
             diagnostics.AppendLine("Top-level test parser: " + (status.cliSupportsTestTopLevel ? "supported" : "missing"));
             if (!string.IsNullOrWhiteSpace(status.cliCommandCheckMessage))

@@ -20,10 +20,11 @@ Do not edit installed user skills under home directories. Edit the payload sourc
 
 ## Versioning Rules
 
-- If Unity package C# or editor UI code changes and that change must be delivered through Package Manager, bump the UPM package version in `packages/com.cubix.unity-cli/package.json`.
-- If the installable `cubix-cli` behavior changes and users must reinstall or update the CLI payload, bump the version even when the Unity package-side change is small.
+- Keep the UPM package version and the installable `cubix-cli` payload version aligned for each released package update.
+- If Unity package C# or editor UI code changes and that change must be delivered through Package Manager, bump both `packages/com.cubix.unity-cli/package.json` and the CLI payload version files.
+- If the installable `cubix-cli` behavior changes and users must reinstall or update the CLI payload, bump the aligned package and CLI versions together.
 - Do not rely only on capability checks when a CLI reinstall is required for the fix to take effect. Use a version change so the setup window can clearly detect drift and prompt `Reinstall CLI`.
-- Do not bump the CLI payload version or skill payload versions when only the Unity package-side code changes.
+- Skill payload versions remain independent. Do not bump skill payload versions unless the skill payload content changes.
 
 ## Expected Workflow
 

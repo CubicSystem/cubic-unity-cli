@@ -88,7 +88,6 @@ namespace Cubix.UnityCli
                 DrawSectionDivider();
                 EditorGUILayout.Space(4f);
                 DrawColoredRow("Loaded Package", PackageLayout.PackageVersion, !PackageLayout.HasLoadedPackageDrift);
-                DrawWrappedRow("CLI Payload", PackageLayout.CliPayloadVersion);
                 DrawWrappedRow("Loaded Root", PackageLayout.PackageRoot);
                 DrawColoredRow("Project Package", PackageLayout.ProjectPackageVersion, !PackageLayout.HasLoadedPackageDrift);
                 DrawWrappedRow("Lock Version", PackageLayout.ProjectLockPackageVersion);
@@ -156,6 +155,10 @@ namespace Cubix.UnityCli
                 DrawColoredRow("cubix-cli Package", BuildCliPackageLabel(), _cliStatus.cliInstalled && _cliStatus.cliVersionMatches);
                 DrawColoredRow("cubix-cli Command", BuildCliCommandLabel(), _cliStatus.cliCommandAvailable && _cliStatus.cliCommandVersionMatches);
                 DrawStateRow("Top-level Test", _cliStatus.cliSupportsTestTopLevel);
+                if (_cliStatus.cliInstalled && (!_cliStatus.cliVersionMatches || !_cliStatus.cliCommandVersionMatches))
+                {
+                    EditorGUILayout.HelpBox("Installed cubix-cli version does not match the expected CLI version. Reinstall CLI.", MessageType.Warning);
+                }
                 EditorGUILayout.HelpBox(BuildCliDiagnosticsText(), MessageType.None);
 
                 DrawButtonGrid(
@@ -280,7 +283,6 @@ namespace Cubix.UnityCli
             builder.AppendLine();
             builder.AppendLine("Package");
             builder.AppendLine("Loaded Version: " + PackageLayout.PackageVersion);
-            builder.AppendLine("CLI Payload Version: " + PackageLayout.CliPayloadVersion);
             builder.AppendLine("Loaded Root: " + PackageLayout.PackageRoot);
             builder.AppendLine("Project Version: " + PackageLayout.ProjectPackageVersion);
             builder.AppendLine("Lock Version: " + PackageLayout.ProjectLockPackageVersion);
