@@ -90,11 +90,13 @@ namespace Cubix.UnityCli
                 DrawColoredRow("Loaded Package", PackageLayout.PackageVersion, !PackageLayout.HasLoadedPackageDrift);
                 DrawWrappedRow("Loaded Root", PackageLayout.PackageRoot);
                 DrawColoredRow("Project Package", PackageLayout.ProjectPackageVersion, !PackageLayout.HasLoadedPackageDrift);
+                DrawWrappedRow("Lock Version", PackageLayout.ProjectLockPackageVersion);
+                DrawWrappedRow("Manifest Spec", PackageLayout.ProjectManifestDependencySpec);
                 DrawWrappedRow("Project Root", PackageLayout.ProjectPackageRoot);
                 if (PackageLayout.HasLoadedPackageDrift)
                 {
                     EditorGUILayout.HelpBox(
-                        "The loaded Cubix Unity CLI package does not match the project package version. Unity may still be using the previous package build. Reopen the editor or force a package reload before trusting setup diagnostics.",
+                        "The loaded Cubix Unity CLI package does not match the project package metadata. Unity may still be using the previous package build. Reopen the editor or force a package reload before trusting setup diagnostics.",
                         MessageType.Warning);
                 }
             }
@@ -264,6 +266,8 @@ namespace Cubix.UnityCli
             builder.AppendLine("Loaded Version: " + PackageLayout.PackageVersion);
             builder.AppendLine("Loaded Root: " + PackageLayout.PackageRoot);
             builder.AppendLine("Project Version: " + PackageLayout.ProjectPackageVersion);
+            builder.AppendLine("Lock Version: " + PackageLayout.ProjectLockPackageVersion);
+            builder.AppendLine("Manifest Spec: " + PackageLayout.ProjectManifestDependencySpec);
             builder.AppendLine("Project Root: " + PackageLayout.ProjectPackageRoot);
             builder.AppendLine("Loaded Drift: " + PackageLayout.HasLoadedPackageDrift);
             builder.AppendLine();
