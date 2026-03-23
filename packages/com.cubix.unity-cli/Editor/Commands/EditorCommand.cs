@@ -30,13 +30,17 @@ namespace Cubix.UnityCli
             {
                 Action = "play",
                 Description = "Enter play mode.",
-                Tags = CommandMetadata.Tags(CommandTags.Core, CommandTags.Editor)
+                Tags = CommandMetadata.Tags(CommandTags.Core, CommandTags.Editor),
+                Parameters = CommandMetadata.Parameters(
+                    CommandMetadata.Parameter("timeoutMs", "number", false, "Maximum time the play mode transition should remain pending.", 120000))
             };
             yield return new CommandDefinition
             {
                 Action = "stop",
                 Description = "Exit play mode.",
-                Tags = CommandMetadata.Tags(CommandTags.Core, CommandTags.Editor)
+                Tags = CommandMetadata.Tags(CommandTags.Core, CommandTags.Editor),
+                Parameters = CommandMetadata.Parameters(
+                    CommandMetadata.Parameter("timeoutMs", "number", false, "Maximum time the play mode transition should remain pending.", 120000))
             };
             yield return new CommandDefinition
             {
@@ -74,9 +78,9 @@ namespace Cubix.UnityCli
                 case "state":
                     return new CommandSuccessResponse("Editor state.", BuildState());
                 case "play":
-                    return RequestPlayModeTransition(true);
+                    return new CommandSuccessResponse("Play mode start requested.", PlayModeTransitionController.StartTransition(parameters, true));
                 case "stop":
-                    return RequestPlayModeTransition(false);
+                    return new CommandSuccessResponse("Play mode stop requested.", PlayModeTransitionController.StartTransition(parameters, false));
                 case "pause":
                     var paused = parameters.Value<bool?>("paused") ?? !EditorApplication.isPaused;
                     EditorApplication.isPaused = paused;
@@ -112,53 +116,6 @@ namespace Cubix.UnityCli
                 isPaused = EditorApplication.isPaused,
                 isCompiling = EditorApplication.isCompiling,
                 isUpdating = EditorApplication.isUpdating,
-                activeScene = new
-                {
-                    name = scene.name,
-                    path = scene.path,
-                    isLoaded = scene.isLoaded
-                }
-            };
-        }
-
-        private static object RequestPlayModeTransition(bool desiredIsPlaying)
-        {
-            if (EditorApplication.isPlaying == desiredIsPlaying)
-            {
-                if (!desiredIsPlaying)
-                {
-                    EditorApplication.isPaused = false;
-                }
-
-                return new CommandSuccessResponse(
-                    desiredIsPlaying ? "Editor is already in play mode." : "Editor is already stopped.",
-                    BuildTransitionState(desiredIsPlaying, false));
-            }
-
-            EditorApplication.delayCall += () =>
-            {
-                EditorApplication.isPaused = false;
-                EditorApplication.isPlaying = desiredIsPlaying;
-            };
-
-            return new CommandSuccessResponse(
-                desiredIsPlaying ? "Starting play mode." : "Stopping play mode.",
-                BuildTransitionState(desiredIsPlaying, true));
-        }
-
-        private static object BuildTransitionState(bool requestedIsPlaying, bool transitionPending)
-        {
-            var scene = SceneManager.GetActiveScene();
-            return new
-            {
-                isPlaying = EditorApplication.isPlaying,
-                isPlayingOrWillChangePlaymode = EditorApplication.isPlayingOrWillChangePlaymode,
-                playModeTransitionPending = EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode,
-                isPaused = EditorApplication.isPaused,
-                isCompiling = EditorApplication.isCompiling,
-                isUpdating = EditorApplication.isUpdating,
-                requestedIsPlaying,
-                transitionPending,
                 activeScene = new
                 {
                     name = scene.name,

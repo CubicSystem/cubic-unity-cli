@@ -102,7 +102,8 @@ namespace Cubix.UnityCli
                         !EditorApplication.isCompiling &&
                         !EditorApplication.isUpdating &&
                         !CompilationAwaiter.HasPendingVerifyJob() &&
-                        !TestRunController.HasPendingRun(),
+                        !TestRunController.HasPendingRun() &&
+                        !PlayModeTransitionController.HasPendingTransition(),
                 reloading = IsReloading,
                 commandCount = CommandRouter.ListCommands(includeUnsafe: true).Count
             };

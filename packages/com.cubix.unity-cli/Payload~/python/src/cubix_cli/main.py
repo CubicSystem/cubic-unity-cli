@@ -401,6 +401,22 @@ def build_play_mode_state_from_snapshot(snapshot: Dict[str, Any]) -> Dict[str, A
     if isinstance(active_scene, dict):
         state.setdefault("activeScene", active_scene)
 
+    transition = snapshot.get("playMode")
+    if isinstance(transition, dict):
+        state["transition"] = transition
+        for key in (
+            "id",
+            "state",
+            "desiredIsPlaying",
+            "startedAtUtc",
+            "updatedAtUtc",
+            "timeoutMs",
+            "success",
+            "message",
+        ):
+            if key in transition:
+                state[key] = transition.get(key)
+
     return state
 
 
@@ -421,11 +437,31 @@ def read_play_mode_state(args: argparse.Namespace, client: UnityClient) -> Dict[
     return state
 
 
+def is_terminal_play_mode_transition_state(
+    state: Dict[str, Any],
+    desired_is_playing: bool,
+    transition_id: Optional[str] = None,
+) -> bool:
+    transition = state.get("transition")
+    if isinstance(transition, dict):
+        current_transition_id = transition.get("id")
+        if transition_id and current_transition_id == transition_id:
+            transition_state = transition.get("state")
+            if transition.get("success") is not None or transition_state in {"completed", "failed", "timed_out", "canceled"}:
+                return True
+
+        if not transition_id and bool(transition.get("success")) and bool(state.get("isPlaying")) == desired_is_playing:
+            return True
+
+    return bool(state.get("isPlaying")) == desired_is_playing and not bool(state.get("playModeTransitionPending"))
+
+
 def wait_for_play_mode_state(
     args: argparse.Namespace,
     client: UnityClient,
     desired_is_playing: bool,
     timeout_seconds: float,
+    transition_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     deadline = time.monotonic() + max(timeout_seconds, 1.0)
     last_state: Dict[str, Any] = {}
@@ -435,7 +471,7 @@ def wait_for_play_mode_state(
         try:
             state = read_play_mode_state(args, client)
             last_state = state
-            if bool(state.get("isPlaying")) == desired_is_playing:
+            if is_terminal_play_mode_transition_state(state, desired_is_playing, transition_id=transition_id):
                 return state
         except (DiscoveryError, ClientError) as exc:
             last_error = str(exc)
@@ -478,8 +514,20 @@ def request_play_mode_transition(
     timeout_seconds: float,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     command = "editor.play" if desired_is_playing else "editor.stop"
-    requested_state = command_data(client, command, retries=2)
-    final_state = wait_for_play_mode_state(args, client, desired_is_playing=desired_is_playing, timeout_seconds=timeout_seconds)
+    requested_state = command_data(
+        client,
+        command,
+        {"timeoutMs": max(int(timeout_seconds * 1000.0), 1000)},
+        retries=2,
+    )
+    transition_id = requested_state.get("id") if isinstance(requested_state, dict) else None
+    final_state = wait_for_play_mode_state(
+        args,
+        client,
+        desired_is_playing=desired_is_playing,
+        timeout_seconds=timeout_seconds,
+        transition_id=transition_id,
+    )
     return requested_state, final_state
 
 
@@ -541,11 +589,31 @@ def handle_editor_play_mode_command(args: argparse.Namespace) -> int:
             desired_is_playing=desired_is_playing,
             timeout_seconds=timeout_seconds,
         )
+        transition = final_state.get("transition")
+        if isinstance(transition, dict):
+            transition_success = transition.get("success")
+            transition_state = transition.get("state")
+            if transition_success is False or transition_state in {"failed", "timed_out", "canceled"}:
+                output(
+                    {
+                        "success": False,
+                        "message": final_state.get("message") or (
+                            "Unity did not enter play mode before the timeout."
+                            if desired_is_playing
+                            else "Unity did not exit play mode before the timeout."
+                        ),
+                        "requested": requested_state,
+                        "state": final_state,
+                    },
+                    args.json,
+                )
+                return 2
+
         if bool(final_state.get("isPlaying")) != desired_is_playing:
             output(
                 {
                     "success": False,
-                    "message": (
+                    "message": final_state.get("message") or (
                         "Unity did not enter play mode before the timeout."
                         if desired_is_playing
                         else "Unity did not exit play mode before the timeout."
@@ -616,7 +684,7 @@ def handle_playtest(args: argparse.Namespace) -> int:
                 {
                     "success": False,
                     "stopReason": "play_mode_start_failed",
-                    "message": "Unity did not enter play mode before the playtest timeout.",
+                    "message": entered_state.get("message") or "Unity did not enter play mode before the playtest timeout.",
                     "editor": {
                         "before": before_state,
                         "requestedStart": started_state,

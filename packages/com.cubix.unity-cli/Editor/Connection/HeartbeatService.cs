@@ -85,6 +85,7 @@ namespace Cubix.UnityCli
         {
             var verify = CompilationAwaiter.GetVerifyJob();
             var test = TestRunController.GetCurrentJob();
+            var playMode = PlayModeTransitionController.GetCurrentJob();
             var commands = ToolDiscovery.GetCommandMetadata();
             var activeScene = BuildActiveSceneSnapshot();
             var reloading = ConnectionService.IsReloading;
@@ -93,7 +94,8 @@ namespace Cubix.UnityCli
                         !EditorApplication.isCompiling &&
                         !EditorApplication.isUpdating &&
                         !CompilationAwaiter.HasPendingVerifyJob() &&
-                        !TestRunController.HasPendingRun();
+                        !TestRunController.HasPendingRun() &&
+                        !PlayModeTransitionController.HasPendingTransition();
             return new
             {
                 projectName = ConnectorPaths.ProjectName,
@@ -115,6 +117,7 @@ namespace Cubix.UnityCli
                 reloading,
                 verify,
                 test,
+                playMode,
                 commandCount = commands.Count,
                 commands,
                 connection = ConnectionService.GetSnapshot(),
