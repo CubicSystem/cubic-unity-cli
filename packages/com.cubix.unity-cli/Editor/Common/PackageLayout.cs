@@ -38,12 +38,6 @@ namespace Cubix.UnityCli
         {
             get
             {
-                if (!string.IsNullOrWhiteSpace(ProjectPackageRoot) &&
-                    !string.Equals(PackageRoot, ProjectPackageRoot, System.StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-
                 if (!string.IsNullOrWhiteSpace(ProjectPackageVersion) &&
                     !string.Equals(PackageVersion, ProjectPackageVersion, System.StringComparison.OrdinalIgnoreCase))
                 {

@@ -87,26 +87,28 @@ namespace Cubix.UnityCli
                 EditorGUILayout.LabelField("Cubix Unity CLI", _sectionTitleStyle);
                 DrawSectionDivider();
                 EditorGUILayout.Space(4f);
-                DrawColoredRow("Loaded Package", PackageLayout.PackageVersion, !PackageLayout.HasLoadedPackageDrift);
+                DrawWrappedRow("Loaded Package", PackageLayout.PackageVersion);
                 DrawWrappedRow("Loaded Root", PackageLayout.PackageRoot);
-                DrawColoredRow("Project Package", PackageLayout.ProjectPackageVersion, !PackageLayout.HasLoadedPackageDrift);
-                DrawWrappedRow("Lock Version", PackageLayout.ProjectLockPackageVersion);
-                DrawWrappedRow("Manifest Spec", PackageLayout.ProjectManifestDependencySpec);
-                DrawWrappedRow("Project Root", PackageLayout.ProjectPackageRoot);
-                DrawWrappedRow("Reload Status", PackageReloadService.StatusMessage);
+                if (!string.IsNullOrWhiteSpace(PackageReloadService.StatusMessage) &&
+                    (PackageReloadService.HasPendingReload || PackageLayout.HasLoadedPackageDrift))
+                {
+                    DrawWrappedRow("Reload Status", PackageReloadService.StatusMessage);
+                }
+
                 if (PackageLayout.HasLoadedPackageDrift)
                 {
                     EditorGUILayout.HelpBox(
-                        "The loaded Cubix Unity CLI package does not match the project package metadata. This should not happen during a normal package update. Use the reload button only as a fallback; if the loaded package still stays stale afterward, restart Unity.",
+                        "The loaded Cubix Unity CLI package version does not match the resolved project package version. Use reload only as a fallback; if it still stays stale afterward, restart Unity.",
                         MessageType.Warning);
-                    EditorGUILayout.Space(6f);
-                    DrawButtonGrid(
-                        new ButtonDefinition(
-                            PackageReloadService.HasPendingReload ? "Reload Pending" : "Reload Package Scripts",
-                            RunPackageReloadAction,
-                            FailureColor,
-                            !PackageReloadService.HasPendingReload));
                 }
+
+                EditorGUILayout.Space(6f);
+                DrawButtonGrid(
+                    new ButtonDefinition(
+                        PackageReloadService.HasPendingReload ? "Reload Pending" : "Reload Package Scripts",
+                        RunPackageReloadAction,
+                        null,
+                        !PackageReloadService.HasPendingReload));
             }
         }
 
@@ -159,7 +161,6 @@ namespace Cubix.UnityCli
                 {
                     EditorGUILayout.HelpBox("Installed cubix-cli version does not match the expected CLI version. Reinstall CLI.", MessageType.Warning);
                 }
-                EditorGUILayout.HelpBox(BuildCliDiagnosticsText(), MessageType.None);
 
                 DrawButtonGrid(
                     new ButtonDefinition(

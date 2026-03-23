@@ -31,12 +31,6 @@ namespace Cubix.UnityCli
 
         public static void RequestReload(string reason)
         {
-            if (!PackageLayout.HasLoadedPackageDrift)
-            {
-                SetStatus("No package drift was detected.");
-                return;
-            }
-
             SessionState.SetBool(PendingKey, true);
             ResolveWasRequested = false;
             _nextAttemptAt = 0d;
@@ -49,12 +43,6 @@ namespace Cubix.UnityCli
         {
             if (!HasPendingReload)
             {
-                return;
-            }
-
-            if (!PackageLayout.HasLoadedPackageDrift)
-            {
-                ClearPending("Loaded Cubix Unity CLI package matches the project metadata.");
                 return;
             }
 
