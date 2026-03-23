@@ -911,6 +911,21 @@ def handle_list(args: argparse.Namespace) -> int:
 
 
 def handle_help_command(args: argparse.Namespace) -> int:
+    local_help_parser = resolve_local_help_parser(args.target_command)
+    if local_help_parser is not None:
+        if args.json:
+            output(
+                {
+                    "command": args.target_command,
+                    "kind": "local",
+                    "help": local_help_parser.format_help(),
+                },
+                args.json,
+            )
+        else:
+            output(local_help_parser.format_help().rstrip(), args.json)
+        return 0
+
     try:
         response = build_client(args).command("commands.describe", {"command": args.target_command})
         output(response["data"], args.json)
@@ -918,6 +933,31 @@ def handle_help_command(args: argparse.Namespace) -> int:
     except (DiscoveryError, ClientError) as exc:
         output({"success": False, "message": str(exc)}, args.json)
         return 1
+
+
+def resolve_local_help_parser(target_command: str) -> Optional[argparse.ArgumentParser]:
+    if not target_command or "." in target_command:
+        return None
+
+    tokens = [token for token in target_command.strip().split() if token]
+    if not tokens:
+        return None
+
+    current_parser = build_parser()
+    for token in tokens:
+        next_parser: Optional[argparse.ArgumentParser] = None
+        for action in current_parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                next_parser = action.choices.get(token)
+                if next_parser is not None:
+                    break
+
+        if next_parser is None:
+            return None
+
+        current_parser = next_parser
+
+    return current_parser
 
 
 def handle_call(args: argparse.Namespace) -> int:

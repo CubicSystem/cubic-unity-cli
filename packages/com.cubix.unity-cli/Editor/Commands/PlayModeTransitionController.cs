@@ -181,6 +181,8 @@ namespace Cubix.UnityCli
                 return record;
             }
 
+            var playModeTransitionInProgress = EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode;
+
             var nowUtc = DateTime.UtcNow;
             if (TryGetStartedAtUtc(record, out var startedAtUtc) &&
                 nowUtc > startedAtUtc.AddMilliseconds(record.timeoutMs))
@@ -191,7 +193,7 @@ namespace Cubix.UnityCli
                 return record;
             }
 
-            if (EditorApplication.isPlaying == record.desiredIsPlaying && !EditorApplication.isPlayingOrWillChangePlaymode)
+            if (EditorApplication.isPlaying == record.desiredIsPlaying && !playModeTransitionInProgress)
             {
                 Complete(record, true, record.desiredIsPlaying ? "Play mode started." : "Play mode stopped.");
                 return record;
@@ -222,7 +224,7 @@ namespace Cubix.UnityCli
                 return UpdatePendingState(record, "queued", "Waiting for the current Unity test run to finish before changing play mode.");
             }
 
-            if (EditorApplication.isPlayingOrWillChangePlaymode)
+            if (playModeTransitionInProgress)
             {
                 return UpdatePendingState(
                     record,
