@@ -1,7 +1,6 @@
 using UnityEditor;
 using UnityEditor.Compilation;
 using UnityEditor.PackageManager;
-using UnityEditor.PackageManager.Requests;
 
 namespace Cubix.UnityCli
 {
@@ -12,10 +11,10 @@ namespace Cubix.UnityCli
         private const string PendingSignatureKey = "Cubix.UnityCli.PackageReload.PendingSignature";
         private const string PendingKey = "Cubix.UnityCli.PackageReload.Pending";
         private const string StatusKey = "Cubix.UnityCli.PackageReload.Status";
+        private const string ResolveRequestedKey = "Cubix.UnityCli.PackageReload.ResolveRequested";
         private const double RetryIntervalSeconds = 5.0d;
 
         private static double _nextAttemptAt;
-        private static Request _resolveRequest;
 
         static PackageReloadService()
         {
@@ -26,6 +25,12 @@ namespace Cubix.UnityCli
         public static bool HasPendingReload => SessionState.GetBool(PendingKey, false);
 
         public static string StatusMessage => SessionState.GetString(StatusKey, string.Empty);
+
+        private static bool ResolveWasRequested
+        {
+            get => SessionState.GetBool(ResolveRequestedKey, false);
+            set => SessionState.SetBool(ResolveRequestedKey, value);
+        }
 
         public static void RequestReload(string reason)
         {
@@ -85,28 +90,20 @@ namespace Cubix.UnityCli
                 return;
             }
 
-            if (_resolveRequest != null)
+            if (ResolveWasRequested)
             {
-                if (!_resolveRequest.IsCompleted)
+                if (EditorApplication.isUpdating || EditorApplication.isCompiling || ConnectionService.IsReloading)
                 {
-                    SetStatus("Waiting for Unity Package Manager to finish resolving Cubix Unity CLI.");
+                    SetStatus("Waiting for Unity Package Manager and script reload to finish updating Cubix Unity CLI.");
                     return;
                 }
 
-                if (_resolveRequest.Status == StatusCode.Failure)
-                {
-                    _resolveRequest = null;
-                    _nextAttemptAt = EditorApplication.timeSinceStartup + RetryIntervalSeconds;
-                    SetStatus("Cubix Unity CLI package resolve failed. Retrying shortly.");
-                    return;
-                }
-
-                _resolveRequest = null;
                 AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
                 RequestScriptReload();
                 CompilationPipeline.RequestScriptCompilation();
+                ResolveWasRequested = false;
                 _nextAttemptAt = EditorApplication.timeSinceStartup + RetryIntervalSeconds;
-                SetStatus("Package resolve completed. Waiting for the loaded Cubix Unity CLI build to update.");
+                SetStatus("Package resolve finished. Waiting for the loaded Cubix Unity CLI build to update.");
                 return;
             }
 
@@ -125,13 +122,15 @@ namespace Cubix.UnityCli
                 }
 
                 AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
-                _resolveRequest = Client.Resolve();
+                Client.Resolve();
+                ResolveWasRequested = true;
                 SessionState.SetString(AttemptedSignatureKey, signature);
                 _nextAttemptAt = EditorApplication.timeSinceStartup + RetryIntervalSeconds;
-                SetStatus("Triggered a Cubix Unity CLI package resolve. Waiting for Package Manager completion.");
+                SetStatus("Triggered a Cubix Unity CLI package resolve. Waiting for Package Manager processing.");
             }
             catch (System.Exception exception)
             {
+                ResolveWasRequested = false;
                 _nextAttemptAt = EditorApplication.timeSinceStartup + RetryIntervalSeconds;
                 SetStatus("Could not trigger a Cubix Unity CLI package reload: " + exception.Message);
             }
@@ -157,6 +156,7 @@ namespace Cubix.UnityCli
         {
             SessionState.SetBool(PendingKey, false);
             SessionState.EraseString(PendingSignatureKey);
+            ResolveWasRequested = false;
             if (PackageLayout.HasLoadedPackageDrift)
             {
                 return;
