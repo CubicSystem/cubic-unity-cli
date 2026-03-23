@@ -98,7 +98,7 @@ namespace Cubix.UnityCli
                 if (PackageLayout.HasLoadedPackageDrift)
                 {
                     EditorGUILayout.HelpBox(
-                        "The loaded Cubix Unity CLI package does not match the project package metadata. Unity may still be using the previous package build. Reopen the editor or force a package reload before trusting setup diagnostics.",
+                        "The loaded Cubix Unity CLI package does not match the project package metadata. This should not happen during a normal package update. Use the reload button only as a fallback; if the loaded package still stays stale afterward, restart Unity.",
                         MessageType.Warning);
                     EditorGUILayout.Space(6f);
                     DrawButtonGrid(
