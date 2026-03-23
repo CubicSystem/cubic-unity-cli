@@ -22,6 +22,10 @@ namespace Cubix.UnityCli
 
         public static string ProjectPackageRoot => ResolveEmbeddedPackageRoot();
 
+        public static string ProjectPackageJsonAssetPath => !string.IsNullOrWhiteSpace(ProjectPackageRoot)
+            ? PackageAssetPath + "/package.json"
+            : null;
+
         public static string ProjectManifestDependencySpec => ReadProjectManifestDependencySpec();
 
         public static string ProjectLockPackageVersion => ReadProjectLockPackageVersion();
@@ -30,10 +34,25 @@ namespace Cubix.UnityCli
 
         public static string CliPayloadVersion => ReadCliPayloadVersion();
 
-        public static bool HasLoadedPackageDrift =>
-            !string.Equals(PackageVersion, ProjectPackageVersion, System.StringComparison.OrdinalIgnoreCase) ||
-            (!string.IsNullOrWhiteSpace(ProjectPackageRoot) &&
-             !string.Equals(PackageRoot, ProjectPackageRoot, System.StringComparison.OrdinalIgnoreCase));
+        public static bool HasLoadedPackageDrift
+        {
+            get
+            {
+                if (!string.IsNullOrWhiteSpace(ProjectPackageRoot) &&
+                    !string.Equals(PackageRoot, ProjectPackageRoot, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                if (!string.IsNullOrWhiteSpace(ProjectPackageVersion) &&
+                    !string.Equals(PackageVersion, ProjectPackageVersion, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                return false;
+            }
+        }
 
         public static string PythonPayloadDirectory => Path.Combine(PackageRoot, "Payload~", "python");
 
@@ -44,7 +63,7 @@ namespace Cubix.UnityCli
         private static string ResolveEmbeddedPackageRoot()
         {
             var path = Path.Combine(ConnectorPaths.ProjectPath, "Packages", PackageName);
-            return Directory.Exists(path) ? path : null;
+            return Directory.Exists(path) && File.Exists(Path.Combine(path, "package.json")) ? path : null;
         }
 
         private static string ReadProjectManifestDependencySpec()

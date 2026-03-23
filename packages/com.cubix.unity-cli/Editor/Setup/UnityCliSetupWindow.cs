@@ -8,13 +8,8 @@ namespace Cubix.UnityCli
     {
         private static readonly Color SuccessColor = new Color(0.28f, 0.68f, 0.34f);
         private static readonly Color FailureColor = new Color(0.82f, 0.34f, 0.34f);
-        private static readonly Color NeutralButtonColor = new Color(0.29f, 0.31f, 0.35f);
-        private static readonly Color DisabledButtonColor = new Color(0.22f, 0.22f, 0.22f);
-        private static readonly Color ButtonBorderColor = new Color(0.08f, 0.08f, 0.08f, 0.75f);
-        private static readonly Color SectionBackgroundColor = new Color(0.18f, 0.18f, 0.18f, 0.9f);
-        private static readonly Color SectionBorderColor = new Color(0.42f, 0.42f, 0.42f, 0.55f);
-        private static readonly Color SeparatorColor = new Color(0.52f, 0.52f, 0.52f, 0.45f);
-        private const float ButtonMinHeight = 28f;
+        private static readonly Color SeparatorColor = new Color(0.35f, 0.35f, 0.35f, 0.35f);
+        private const float ButtonMinHeight = 24f;
 
         private Vector2 _scrollPosition;
         private string _actionLog;
@@ -28,7 +23,6 @@ namespace Cubix.UnityCli
         private GUIStyle _sectionBoxStyle;
         private GUIStyle _sectionTitleStyle;
         private GUIStyle _sectionBodyBoxStyle;
-        private GUIStyle _buttonTextStyle;
 
         private sealed class ButtonDefinition
         {
@@ -418,33 +412,19 @@ namespace Cubix.UnityCli
 
             if (_wrappedButtonStyle == null)
             {
-                _wrappedButtonStyle = new GUIStyle(EditorStyles.miniButton)
+                _wrappedButtonStyle = new GUIStyle(GUI.skin.button)
                 {
                     wordWrap = true,
-                    alignment = TextAnchor.MiddleCenter,
-                    padding = new RectOffset(10, 10, 7, 7),
-                    margin = new RectOffset(4, 4, 4, 4)
-                };
-            }
-
-            if (_buttonTextStyle == null)
-            {
-                _buttonTextStyle = new GUIStyle(EditorStyles.miniButtonMid)
-                {
-                    wordWrap = true,
-                    alignment = TextAnchor.MiddleCenter,
-                    fontStyle = FontStyle.Bold,
-                    richText = false
+                    alignment = TextAnchor.MiddleCenter
                 };
             }
 
             if (_sectionBoxStyle == null)
             {
-                _sectionBoxStyle = new GUIStyle(GUI.skin.box)
+                _sectionBoxStyle = new GUIStyle(EditorStyles.helpBox)
                 {
-                    padding = new RectOffset(12, 12, 12, 12),
-                    margin = new RectOffset(0, 0, 0, 0),
-                    border = new RectOffset(6, 6, 6, 6)
+                    padding = new RectOffset(12, 12, 10, 12),
+                    margin = new RectOffset(0, 0, 0, 0)
                 };
             }
 
@@ -452,27 +432,22 @@ namespace Cubix.UnityCli
             {
                 _sectionTitleStyle = new GUIStyle(EditorStyles.boldLabel)
                 {
-                    fontSize = 12,
-                    fontStyle = FontStyle.Bold
+                    fontSize = 12
                 };
             }
 
             if (_sectionBodyBoxStyle == null)
             {
-                _sectionBodyBoxStyle = new GUIStyle(GUI.skin.box)
+                _sectionBodyBoxStyle = new GUIStyle(EditorStyles.helpBox)
                 {
-                    padding = new RectOffset(10, 10, 10, 10),
-                    margin = new RectOffset(0, 0, 0, 0),
-                    border = new RectOffset(6, 6, 6, 6)
+                    padding = new RectOffset(10, 10, 8, 10),
+                    margin = new RectOffset(0, 0, 0, 0)
                 };
             }
         }
 
         private void DrawSection(string title, System.Action content)
         {
-            var previousBackgroundColor = GUI.backgroundColor;
-            GUI.backgroundColor = SectionBackgroundColor;
-
             using (new EditorGUILayout.VerticalScope(_sectionBoxStyle))
             {
                 EditorGUILayout.LabelField(title, _sectionTitleStyle);
@@ -480,8 +455,6 @@ namespace Cubix.UnityCli
                 EditorGUILayout.Space(4f);
                 content();
             }
-
-            GUI.backgroundColor = previousBackgroundColor;
         }
 
         private void DrawSectionDivider()
@@ -543,39 +516,27 @@ namespace Cubix.UnityCli
 
         private bool DrawButton(ButtonDefinition button)
         {
-            var rect = GUILayoutUtility.GetRect(
-                GUIContent.none,
-                _wrappedButtonStyle,
-                GUILayout.MinHeight(ButtonMinHeight),
-                GUILayout.ExpandWidth(true));
-
-            var fillColor = !button.Enabled
-                ? DisabledButtonColor
-                : button.BackgroundColor ?? NeutralButtonColor;
-            var textColor = button.Enabled ? Color.white : new Color(0.65f, 0.65f, 0.65f);
-
-            EditorGUI.DrawRect(rect, fillColor);
-            DrawBorder(rect, ButtonBorderColor);
-
-            var previousContentColor = GUI.contentColor;
-            GUI.contentColor = textColor;
-            GUI.Label(rect, button.Label, _buttonTextStyle);
-            GUI.contentColor = previousContentColor;
-
-            if (!button.Enabled)
+            using (new EditorGUI.DisabledScope(!button.Enabled))
             {
-                return false;
+                var previousColor = GUI.backgroundColor;
+                if (button.Enabled && button.BackgroundColor.HasValue)
+                {
+                    GUI.backgroundColor = button.BackgroundColor.Value;
+                }
+
+                try
+                {
+                    return GUILayout.Button(
+                        button.Label,
+                        _wrappedButtonStyle,
+                        GUILayout.MinHeight(ButtonMinHeight),
+                        GUILayout.ExpandWidth(true));
+                }
+                finally
+                {
+                    GUI.backgroundColor = previousColor;
+                }
             }
-
-            return GUI.Button(rect, GUIContent.none, GUIStyle.none);
-        }
-
-        private static void DrawBorder(Rect rect, Color color)
-        {
-            EditorGUI.DrawRect(new Rect(rect.xMin, rect.yMin, rect.width, 1f), color);
-            EditorGUI.DrawRect(new Rect(rect.xMin, rect.yMax - 1f, rect.width, 1f), color);
-            EditorGUI.DrawRect(new Rect(rect.xMin, rect.yMin, 1f, rect.height), color);
-            EditorGUI.DrawRect(new Rect(rect.xMax - 1f, rect.yMin, 1f, rect.height), color);
         }
 
         private static bool IsInstalled(SkillInstallState state)

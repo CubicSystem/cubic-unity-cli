@@ -1,6 +1,7 @@
 using UnityEditor;
 using UnityEditor.Compilation;
 using UnityEditor.PackageManager;
+using UnityEditor.PackageManager.Requests;
 
 namespace Cubix.UnityCli
 {
@@ -14,6 +15,7 @@ namespace Cubix.UnityCli
         private const double RetryIntervalSeconds = 5.0d;
 
         private static double _nextAttemptAt;
+        private static Request _resolveRequest;
 
         static PackageReloadService()
         {
@@ -83,6 +85,31 @@ namespace Cubix.UnityCli
                 return;
             }
 
+            if (_resolveRequest != null)
+            {
+                if (!_resolveRequest.IsCompleted)
+                {
+                    SetStatus("Waiting for Unity Package Manager to finish resolving Cubix Unity CLI.");
+                    return;
+                }
+
+                if (_resolveRequest.Status == StatusCode.Failure)
+                {
+                    _resolveRequest = null;
+                    _nextAttemptAt = EditorApplication.timeSinceStartup + RetryIntervalSeconds;
+                    SetStatus("Cubix Unity CLI package resolve failed. Retrying shortly.");
+                    return;
+                }
+
+                _resolveRequest = null;
+                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+                RequestScriptReload();
+                CompilationPipeline.RequestScriptCompilation();
+                _nextAttemptAt = EditorApplication.timeSinceStartup + RetryIntervalSeconds;
+                SetStatus("Package resolve completed. Waiting for the loaded Cubix Unity CLI build to update.");
+                return;
+            }
+
             if (EditorApplication.isCompiling || EditorApplication.isUpdating || ConnectionService.IsReloading)
             {
                 _nextAttemptAt = EditorApplication.timeSinceStartup + RetryIntervalSeconds;
@@ -92,12 +119,16 @@ namespace Cubix.UnityCli
 
             try
             {
-                Client.Resolve();
+                if (!string.IsNullOrWhiteSpace(PackageLayout.ProjectPackageJsonAssetPath))
+                {
+                    AssetDatabase.ImportAsset(PackageLayout.ProjectPackageJsonAssetPath, ImportAssetOptions.ForceUpdate);
+                }
+
                 AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
-                CompilationPipeline.RequestScriptCompilation();
+                _resolveRequest = Client.Resolve();
                 SessionState.SetString(AttemptedSignatureKey, signature);
-                SessionState.SetBool(PendingKey, false);
-                SetStatus("Triggered Cubix Unity CLI package resolve, refresh, and script compilation.");
+                _nextAttemptAt = EditorApplication.timeSinceStartup + RetryIntervalSeconds;
+                SetStatus("Triggered a Cubix Unity CLI package resolve. Waiting for Package Manager completion.");
             }
             catch (System.Exception exception)
             {
@@ -137,6 +168,14 @@ namespace Cubix.UnityCli
         private static void SetStatus(string message)
         {
             SessionState.SetString(StatusKey, message ?? string.Empty);
+        }
+
+        private static void RequestScriptReload()
+        {
+            var method = typeof(EditorUtility).GetMethod(
+                "RequestScriptReload",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            method?.Invoke(null, null);
         }
     }
 }
