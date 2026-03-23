@@ -104,6 +104,8 @@ namespace Cubix.UnityCli
                 editor = new
                 {
                     isPlaying = EditorApplication.isPlaying,
+                    isPlayingOrWillChangePlaymode = EditorApplication.isPlayingOrWillChangePlaymode,
+                    playModeTransitionPending = EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode,
                     isPaused = EditorApplication.isPaused,
                     isCompiling = EditorApplication.isCompiling,
                     isUpdating = EditorApplication.isUpdating

@@ -17,7 +17,7 @@ DEFAULT_VERIFY_TIMEOUT_MS = 180000
 DEFAULT_TEST_TIMEOUT_MS = 180000
 DEFAULT_PLAYTEST_TIMEOUT_MS = 120000
 DEFAULT_PLAYTEST_DURATION_SECONDS = 5.0
-DEFAULT_EDITOR_PLAY_MODE_TIMEOUT_MS = 15000
+DEFAULT_EDITOR_PLAY_MODE_TIMEOUT_MS = 120000
 STATUS_RETRY_COUNT = 2
 STATUS_RETRY_DELAY_SECONDS = 0.5
 STATUS_FILE_MAX_AGE_SECONDS = 10.0
@@ -382,22 +382,68 @@ def command_data(
         time.sleep(max(retry_delay, 0.0))
 
 
+def build_play_mode_state_from_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    editor = snapshot.get("editor")
+    if not isinstance(editor, dict):
+        return {}
+
+    state = dict(editor)
+    state.setdefault("ready", snapshot.get("ready"))
+    state.setdefault("reloading", snapshot.get("reloading"))
+    state.setdefault("lastUpdatedUtc", snapshot.get("lastUpdatedUtc"))
+
+    connection = snapshot.get("connection")
+    if isinstance(connection, dict):
+        state.setdefault("connected", connection.get("connected"))
+        state.setdefault("lastError", connection.get("lastError"))
+
+    active_scene = snapshot.get("activeScene")
+    if isinstance(active_scene, dict):
+        state.setdefault("activeScene", active_scene)
+
+    return state
+
+
+def read_play_mode_state(args: argparse.Namespace, client: UnityClient) -> Dict[str, Any]:
+    last_error: Optional[str] = None
+
+    try:
+        snapshot = fetch_status_snapshot(args, allow_file_fallback=True)
+        state = build_play_mode_state_from_snapshot(snapshot)
+        if state:
+            return state
+    except (DiscoveryError, ClientError) as exc:
+        last_error = str(exc)
+
+    state = command_data(client, "editor.state", retries=2)
+    if last_error:
+        state.setdefault("lastConnectorError", last_error)
+    return state
+
+
 def wait_for_play_mode_state(
+    args: argparse.Namespace,
     client: UnityClient,
     desired_is_playing: bool,
     timeout_seconds: float,
 ) -> Dict[str, Any]:
     deadline = time.monotonic() + max(timeout_seconds, 1.0)
     last_state: Dict[str, Any] = {}
+    last_error: Optional[str] = None
 
     while time.monotonic() < deadline:
-        state = command_data(client, "editor.state", retries=2)
-        last_state = state
-        if bool(state.get("isPlaying")) == desired_is_playing:
-            return state
+        try:
+            state = read_play_mode_state(args, client)
+            last_state = state
+            if bool(state.get("isPlaying")) == desired_is_playing:
+                return state
+        except (DiscoveryError, ClientError) as exc:
+            last_error = str(exc)
 
         time.sleep(PLAYTEST_POLL_INTERVAL_SECONDS)
 
+    if last_error:
+        last_state.setdefault("lastConnectorError", last_error)
     return last_state
 
 
@@ -426,13 +472,14 @@ def resolve_results_path(path: Optional[str]) -> Optional[str]:
 
 
 def request_play_mode_transition(
+    args: argparse.Namespace,
     client: UnityClient,
     desired_is_playing: bool,
     timeout_seconds: float,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     command = "editor.play" if desired_is_playing else "editor.stop"
     requested_state = command_data(client, command, retries=2)
-    final_state = wait_for_play_mode_state(client, desired_is_playing=desired_is_playing, timeout_seconds=timeout_seconds)
+    final_state = wait_for_play_mode_state(args, client, desired_is_playing=desired_is_playing, timeout_seconds=timeout_seconds)
     return requested_state, final_state
 
 
@@ -489,6 +536,7 @@ def handle_editor_play_mode_command(args: argparse.Namespace) -> int:
     try:
         client = build_client(args)
         requested_state, final_state = request_play_mode_transition(
+            args,
             client,
             desired_is_playing=desired_is_playing,
             timeout_seconds=timeout_seconds,
@@ -536,10 +584,10 @@ def handle_playtest(args: argparse.Namespace) -> int:
         if args.start_scene:
             command_data(client, "scene.open", {"path": args.start_scene}, retries=1)
 
-        before_state = command_data(client, "editor.state", retries=1)
+        before_state = read_play_mode_state(args, client)
         restarted_from_playing = bool(before_state.get("isPlaying"))
         if restarted_from_playing:
-            _, before_state = request_play_mode_transition(client, desired_is_playing=False, timeout_seconds=5.0)
+            _, before_state = request_play_mode_transition(args, client, desired_is_playing=False, timeout_seconds=max(overall_deadline - time.monotonic(), 1.0))
             if before_state.get("isPlaying"):
                 output(
                     {
@@ -558,9 +606,10 @@ def handle_playtest(args: argparse.Namespace) -> int:
             console_cleared = True
 
         started_state, entered_state = request_play_mode_transition(
+            args,
             client,
             desired_is_playing=True,
-            timeout_seconds=max(min(overall_deadline - time.monotonic(), 15.0), 1.0),
+            timeout_seconds=max(overall_deadline - time.monotonic(), 1.0),
         )
         if not entered_state.get("isPlaying"):
             output(
@@ -615,9 +664,9 @@ def handle_playtest(args: argparse.Namespace) -> int:
                 runtime_start = command_data(client, "runtime.state", retries=2)
 
             if not success:
-                final_state = command_data(client, "editor.state", retries=1)
+                final_state = read_play_mode_state(args, client)
                 if final_state.get("isPlaying"):
-                    _, final_state = request_play_mode_transition(client, desired_is_playing=False, timeout_seconds=5.0)
+                    _, final_state = request_play_mode_transition(args, client, desired_is_playing=False, timeout_seconds=max(overall_deadline - time.monotonic(), 1.0))
                 output(
                     {
                         "success": False,
@@ -672,9 +721,9 @@ def handle_playtest(args: argparse.Namespace) -> int:
 
             time.sleep(PLAYTEST_POLL_INTERVAL_SECONDS)
 
-        final_state = command_data(client, "editor.state", retries=1)
+        final_state = read_play_mode_state(args, client)
         if final_state.get("isPlaying"):
-            _, final_state = request_play_mode_transition(client, desired_is_playing=False, timeout_seconds=5.0)
+            _, final_state = request_play_mode_transition(args, client, desired_is_playing=False, timeout_seconds=max(overall_deadline - time.monotonic(), 1.0))
             if final_state.get("isPlaying"):
                 success = False
                 stop_reason = "stop_failed"
