@@ -87,8 +87,16 @@ namespace Cubix.UnityCli
                 EditorGUILayout.LabelField("Cubix Unity CLI", _sectionTitleStyle);
                 DrawSectionDivider();
                 EditorGUILayout.Space(4f);
-                DrawWrappedRow("Package Version", PackageLayout.PackageVersion);
-                DrawWrappedRow("Package Root", PackageLayout.PackageRoot);
+                DrawColoredRow("Loaded Package", PackageLayout.PackageVersion, !PackageLayout.HasLoadedPackageDrift);
+                DrawWrappedRow("Loaded Root", PackageLayout.PackageRoot);
+                DrawColoredRow("Project Package", PackageLayout.ProjectPackageVersion, !PackageLayout.HasLoadedPackageDrift);
+                DrawWrappedRow("Project Root", PackageLayout.ProjectPackageRoot);
+                if (PackageLayout.HasLoadedPackageDrift)
+                {
+                    EditorGUILayout.HelpBox(
+                        "The loaded Cubix Unity CLI package does not match the project package version. Unity may still be using the previous package build. Reopen the editor or force a package reload before trusting setup diagnostics.",
+                        MessageType.Warning);
+                }
             }
         }
 
@@ -251,6 +259,13 @@ namespace Cubix.UnityCli
             builder.AppendLine("ProjectHash: " + connection.projectHash);
             builder.AppendLine("CommandCount: " + connection.commandCount);
             builder.AppendLine("LastError: " + connection.lastError);
+            builder.AppendLine();
+            builder.AppendLine("Package");
+            builder.AppendLine("Loaded Version: " + PackageLayout.PackageVersion);
+            builder.AppendLine("Loaded Root: " + PackageLayout.PackageRoot);
+            builder.AppendLine("Project Version: " + PackageLayout.ProjectPackageVersion);
+            builder.AppendLine("Project Root: " + PackageLayout.ProjectPackageRoot);
+            builder.AppendLine("Loaded Drift: " + PackageLayout.HasLoadedPackageDrift);
             builder.AppendLine();
             builder.AppendLine("CLI");
             builder.AppendLine(BuildCliDiagnosticsText());

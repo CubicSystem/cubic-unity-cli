@@ -6,13 +6,23 @@ namespace Cubix.UnityCli
 {
     internal static class PackageLayout
     {
-        private static PackageInfo _packageInfo;
+        private const string PackageAssetPath = "Packages/com.cubix.unity-cli";
 
-        public static PackageInfo PackageInfo => _packageInfo ?? (_packageInfo = PackageInfo.FindForAssembly(Assembly.GetExecutingAssembly()));
+        public static PackageInfo LoadedPackageInfo => PackageInfo.FindForAssembly(Assembly.GetExecutingAssembly());
 
-        public static string PackageRoot => PackageInfo.resolvedPath;
+        public static PackageInfo ProjectPackageInfo => PackageInfo.FindForAssetPath(PackageAssetPath);
 
-        public static string PackageVersion => PackageInfo.version;
+        public static string PackageRoot => LoadedPackageInfo?.resolvedPath ?? ProjectPackageInfo?.resolvedPath;
+
+        public static string PackageVersion => LoadedPackageInfo?.version ?? ProjectPackageInfo?.version;
+
+        public static string ProjectPackageRoot => ProjectPackageInfo?.resolvedPath ?? PackageRoot;
+
+        public static string ProjectPackageVersion => ProjectPackageInfo?.version ?? PackageVersion;
+
+        public static bool HasLoadedPackageDrift =>
+            !string.Equals(PackageVersion, ProjectPackageVersion, System.StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(PackageRoot, ProjectPackageRoot, System.StringComparison.OrdinalIgnoreCase);
 
         public static string PythonPayloadDirectory => Path.Combine(PackageRoot, "Payload~", "python");
 
