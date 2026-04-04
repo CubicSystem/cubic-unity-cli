@@ -1354,6 +1354,7 @@ def build_parser() -> argparse.ArgumentParser:
     find.add_argument("--name")
     find.add_argument("--path")
     find.add_argument("--tag")
+    find.add_argument("--limit", type=int, default=100)
     find.add_argument("--include-inactive", dest="includeInactive", action="store_true")
     find.add_argument("--include-components", dest="includeComponents", action="store_true")
     find.set_defaults(handler=handle_connector_command, command_group="scene", command_action="find")

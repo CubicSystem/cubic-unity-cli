@@ -10,6 +10,10 @@ namespace Cubix.UnityCli
     [CubixCliCommand(Group = "scene", Name = "scene", Description = "Inspect loaded scene structure.")]
     internal sealed class SceneCommand : ICubixCliCommandHandler, ICubixCliPreflightHandler
     {
+        private const int DefaultFindLimit = 100;
+        private const int MaxFindLimit = 200;
+        private const int MaxFindLimitWithComponents = 25;
+
         public IEnumerable<CommandDefinition> DescribeActions()
         {
             yield return new CommandDefinition
@@ -43,6 +47,7 @@ namespace Cubix.UnityCli
                     CommandMetadata.Parameter("name", "string", false, "Alternative name filter."),
                     CommandMetadata.Parameter("path", "string", false, "Exact hierarchy path."),
                     CommandMetadata.Parameter("tag", "string", false, "Unity tag filter."),
+                    CommandMetadata.Parameter("limit", "integer", false, "Maximum number of matches to return.", DefaultFindLimit),
                     CommandMetadata.Parameter("includeInactive", "boolean", false, "Include inactive objects.", false),
                     CommandMetadata.Parameter("includeComponents", "boolean", false, "Include component snapshots.", false))
             };
@@ -93,11 +98,31 @@ namespace Cubix.UnityCli
 
                     var query = parameters.Value<string>("query") ?? parameters.Value<string>("name");
                     var tag = parameters.Value<string>("tag");
-                    var matches = ObjectResolver.FindGameObjects(query, tag, parameters.Value<bool?>("includeInactive") ?? true).ToList();
+                    var includeInactive = parameters.Value<bool?>("includeInactive") ?? true;
+                    var includeComponentsForFind = parameters.Value<bool?>("includeComponents") ?? false;
+                    if (string.IsNullOrWhiteSpace(query) && string.IsNullOrWhiteSpace(tag))
+                    {
+                        return new CommandErrorResponse("scene.find requires at least one filter (query, name, path, or tag). Use scene.hierarchy for full scene traversal.");
+                    }
+
+                    var maxLimit = includeComponentsForFind ? MaxFindLimitWithComponents : MaxFindLimit;
+                    var requestedLimit = parameters.Value<int?>("limit") ?? DefaultFindLimit;
+                    var limit = System.Math.Max(1, System.Math.Min(requestedLimit, maxLimit));
+                    var matches = ObjectResolver.FindGameObjects(query, tag, includeInactive)
+                        .Take(limit + 1)
+                        .ToList();
+                    var truncated = matches.Count > limit;
+                    if (truncated)
+                    {
+                        matches = matches.Take(limit).ToList();
+                    }
+
                     return new CommandSuccessResponse("Scene search results.", new
                     {
                         count = matches.Count,
-                        results = ObjectSnapshotter.SnapshotMatches(matches, parameters.Value<bool?>("includeComponents") ?? false)
+                        limit,
+                        truncated,
+                        results = ObjectSnapshotter.SnapshotMatches(matches, includeComponentsForFind)
                     });
                 case "open":
                     return OpenScene(parameters);
