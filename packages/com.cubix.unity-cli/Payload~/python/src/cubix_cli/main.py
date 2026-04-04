@@ -328,6 +328,57 @@ def wait_for_test(args: argparse.Namespace, job_id: str, timeout_seconds: float)
     return last_state
 
 
+def build_idle_scene_open_state() -> Dict[str, Any]:
+    return {
+        "state": "idle",
+        "success": True,
+        "message": "No scene open request is pending.",
+    }
+
+
+def get_scene_open_state_from_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    scene_open = snapshot.get("sceneOpen")
+    return scene_open if isinstance(scene_open, dict) else build_idle_scene_open_state()
+
+
+def is_terminal_scene_open_state(scene_open_state: Dict[str, Any], job_id: Optional[str] = None) -> bool:
+    if job_id and scene_open_state.get("id") != job_id:
+        return False
+
+    return scene_open_state.get("success") is not None or scene_open_state.get("state") in {
+        "completed",
+        "failed",
+        "timed_out",
+        "canceled",
+    }
+
+
+def wait_for_scene_open(args: argparse.Namespace, job_id: str, timeout_seconds: float) -> Dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds + 15.0
+    last_state: Dict[str, Any] = {"id": job_id, "state": "pending"}
+    last_error: Optional[str] = None
+
+    while time.monotonic() < deadline:
+        try:
+            scene_open_state = get_scene_open_state_from_snapshot(fetch_status_snapshot(args, allow_file_fallback=True))
+            if scene_open_state.get("id") == job_id:
+                last_state = scene_open_state
+                if is_terminal_scene_open_state(scene_open_state, job_id):
+                    return scene_open_state
+        except (DiscoveryError, ClientError) as exc:
+            last_error = str(exc)
+
+        time.sleep(WAIT_LOOP_INTERVAL_SECONDS)
+
+    last_state.setdefault("success", False)
+    last_state.setdefault(
+        "message",
+        "Timed out while waiting for Unity scene open status." + (f" Last connector error: {last_error}" if last_error else ""),
+    )
+    last_state.setdefault("state", "timed_out")
+    return last_state
+
+
 def find_latest_script(client: UnityClient) -> Optional[str]:
     try:
         project_path = Path(client.status(retries=STATUS_RETRY_COUNT, retry_delay=STATUS_RETRY_DELAY_SECONDS)["data"]["projectPath"])
@@ -351,6 +402,8 @@ def is_transient_command_error(exc: ClientError) -> bool:
     return any(
         marker in message
         for marker in (
+            "another cubix command is already running",
+            "command_busy",
             "connector returned invalid json",
             "connection refused",
             "winerror 10061",
@@ -390,11 +443,18 @@ def build_play_mode_state_from_snapshot(snapshot: Dict[str, Any]) -> Dict[str, A
     state = dict(editor)
     state.setdefault("ready", snapshot.get("ready"))
     state.setdefault("reloading", snapshot.get("reloading"))
+    state.setdefault("busy", snapshot.get("busy"))
+    state.setdefault("busyCommand", snapshot.get("busyCommand"))
+    state.setdefault("queuedCommands", snapshot.get("queuedCommands"))
+    state.setdefault("message", snapshot.get("message"))
     state.setdefault("lastUpdatedUtc", snapshot.get("lastUpdatedUtc"))
 
     connection = snapshot.get("connection")
     if isinstance(connection, dict):
         state.setdefault("connected", connection.get("connected"))
+        state.setdefault("busy", connection.get("busy"))
+        state.setdefault("busyCommand", connection.get("busyCommand"))
+        state.setdefault("queuedCommands", connection.get("queuedCommands"))
         state.setdefault("lastError", connection.get("lastError"))
 
     active_scene = snapshot.get("activeScene")
@@ -531,6 +591,26 @@ def request_play_mode_transition(
     return requested_state, final_state
 
 
+def request_scene_open(
+    args: argparse.Namespace,
+    client: UnityClient,
+    scene_path: str,
+    timeout_seconds: float,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    requested_state = command_data(
+        client,
+        "scene.open",
+        {
+            "path": scene_path,
+            "timeoutMs": max(int(timeout_seconds * 1000.0), 1000),
+        },
+        retries=2,
+    )
+    scene_open_id = requested_state.get("id") if isinstance(requested_state, dict) else None
+    final_state = wait_for_scene_open(args, scene_open_id, timeout_seconds)
+    return requested_state, final_state
+
+
 def handle_test_run(args: argparse.Namespace) -> int:
     try:
         ready_snapshot = wait_for_ready(args, args.ready_timeout_ms)
@@ -632,6 +712,46 @@ def handle_editor_play_mode_command(args: argparse.Namespace) -> int:
         return 1
 
 
+def handle_scene_open(args: argparse.Namespace) -> int:
+    timeout_seconds = max(args.timeout_ms, 1000) / 1000.0
+
+    try:
+        client = build_client(args)
+        requested_state, final_state = request_scene_open(
+            args,
+            client,
+            scene_path=args.path,
+            timeout_seconds=timeout_seconds,
+        )
+        if final_state.get("success") is False or final_state.get("state") in {"failed", "timed_out", "canceled"}:
+            output(
+                {
+                    "success": False,
+                    "message": final_state.get("message") or "Unity did not open the scene before the timeout.",
+                    "requested": requested_state,
+                    "state": final_state,
+                },
+                args.json,
+            )
+            return 2
+
+        output(final_state, args.json)
+        return 0
+    except (DiscoveryError, ClientError) as exc:
+        output({"success": False, "message": str(exc)}, args.json)
+        return 1
+
+
+def handle_scene_status(args: argparse.Namespace) -> int:
+    try:
+        scene_open_state = get_scene_open_state_from_snapshot(fetch_status_snapshot(args, allow_file_fallback=True))
+        output(scene_open_state, args.json)
+        return 0 if scene_open_state.get("success") or scene_open_state.get("state") == "idle" else 2
+    except (DiscoveryError, ClientError) as exc:
+        output({"success": False, "message": str(exc)}, args.json)
+        return 1
+
+
 def handle_playtest(args: argparse.Namespace) -> int:
     try:
         ready_snapshot = wait_for_ready(args, args.ready_timeout_ms)
@@ -648,9 +768,41 @@ def handle_playtest(args: argparse.Namespace) -> int:
 
         client = build_client(args)
         overall_deadline = time.monotonic() + max(args.timeout_ms, 1000) / 1000.0
+        start_scene_state: Optional[Dict[str, Any]] = None
 
         if args.start_scene:
-            command_data(client, "scene.open", {"path": args.start_scene}, retries=1)
+            requested_scene_state, start_scene_state = request_scene_open(
+                args,
+                client,
+                scene_path=args.start_scene,
+                timeout_seconds=max(overall_deadline - time.monotonic(), 1.0),
+            )
+            if start_scene_state.get("success") is False or start_scene_state.get("state") in {"failed", "timed_out", "canceled"}:
+                output(
+                    {
+                        "success": False,
+                        "stopReason": "start_scene_open_failed",
+                        "message": start_scene_state.get("message") or "Unity did not open the requested start scene before the playtest timeout.",
+                        "requestedSceneOpen": requested_scene_state,
+                        "sceneOpen": start_scene_state,
+                    },
+                    args.json,
+                )
+                return 2
+
+            ready_after_scene_open = wait_for_ready(args, max(int(max(overall_deadline - time.monotonic(), 1.0) * 1000.0), 1000))
+            if not ready_after_scene_open.get("ready"):
+                output(
+                    {
+                        "success": False,
+                        "stopReason": "start_scene_not_ready",
+                        "message": ready_after_scene_open.get("message", "Unity did not become ready after opening the start scene."),
+                        "sceneOpen": start_scene_state,
+                        "status": ready_after_scene_open,
+                    },
+                    args.json,
+                )
+                return 2
 
         before_state = read_play_mode_state(args, client)
         restarted_from_playing = bool(before_state.get("isPlaying"))
@@ -663,6 +815,7 @@ def handle_playtest(args: argparse.Namespace) -> int:
                         "stopReason": "stop_before_start_failed",
                         "message": "Could not stop the current play mode session before starting playtest.",
                         "editor": {"before": before_state},
+                        "sceneOpen": start_scene_state,
                     },
                     args.json,
                 )
@@ -690,6 +843,7 @@ def handle_playtest(args: argparse.Namespace) -> int:
                         "requestedStart": started_state,
                         "entered": entered_state,
                     },
+                    "sceneOpen": start_scene_state,
                     "console": {
                         "cleared": console_cleared,
                         "errors": read_console_entries(client, level="error", limit=args.error_limit),
@@ -751,6 +905,7 @@ def handle_playtest(args: argparse.Namespace) -> int:
                             "final": final_state,
                             "restartedFromPlaying": restarted_from_playing,
                         },
+                        "sceneOpen": start_scene_state,
                         "console": {
                             "cleared": console_cleared,
                             "errorCount": len(playtest_errors),
@@ -830,6 +985,7 @@ def handle_playtest(args: argparse.Namespace) -> int:
                 "framesElapsed": frames_elapsed,
                 "realtimeElapsed": round(realtime_elapsed, 3) if isinstance(realtime_elapsed, (int, float)) else None,
             },
+            "sceneOpen": start_scene_state,
             "editor": {
                 "before": before_state,
                 "entered": entered_state,
@@ -1013,15 +1169,29 @@ def handle_batch(args: argparse.Namespace) -> int:
 
 def is_ready_snapshot(snapshot: Dict[str, Any]) -> bool:
     editor = snapshot.get("editor", {})
+    connection = snapshot.get("connection", {})
     verify = snapshot.get("verify")
+    test = snapshot.get("test")
+    play_mode = snapshot.get("playMode")
+    scene_open = snapshot.get("sceneOpen")
     verify_pending = isinstance(verify, dict) and verify.get("success") is None
+    test_pending = isinstance(test, dict) and test.get("success") is None
+    play_mode_pending = isinstance(play_mode, dict) and play_mode.get("success") is None
+    scene_open_pending = isinstance(scene_open, dict) and scene_open.get("success") is None
+    busy = bool(snapshot.get("busy")) or (
+        isinstance(connection, dict) and bool(connection.get("busy"))
+    )
     if is_reloading_snapshot(snapshot):
         return False
 
     return bool(snapshot.get("ready")) or (
-        not editor.get("isCompiling", False)
+        not busy
+        and not editor.get("isCompiling", False)
         and not editor.get("isUpdating", False)
         and not verify_pending
+        and not test_pending
+        and not play_mode_pending
+        and not scene_open_pending
     )
 
 
@@ -1169,9 +1339,12 @@ def build_parser() -> argparse.ArgumentParser:
     scene_sub = scene.add_subparsers(dest="command_action", required=True)
     scene_active = scene_sub.add_parser("active")
     scene_active.set_defaults(handler=handle_connector_command, command_group="scene", command_action="active")
+    scene_status = scene_sub.add_parser("status")
+    scene_status.set_defaults(handler=handle_scene_status, command_group="scene", command_action="status")
     scene_open = scene_sub.add_parser("open")
     scene_open.add_argument("path")
-    scene_open.set_defaults(handler=handle_connector_command, command_group="scene", command_action="open")
+    scene_open.add_argument("--timeout-ms", dest="timeout_ms", type=int, default=DEFAULT_STATUS_TIMEOUT_MS)
+    scene_open.set_defaults(handler=handle_scene_open, command_group="scene", command_action="open")
     hierarchy = scene_sub.add_parser("hierarchy")
     hierarchy.add_argument("--include-components", dest="includeComponents", action="store_true")
     hierarchy.add_argument("--max-depth", dest="maxDepth", type=int, default=6)

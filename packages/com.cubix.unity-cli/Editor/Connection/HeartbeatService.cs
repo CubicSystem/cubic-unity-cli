@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine.SceneManagement;
 
@@ -51,6 +52,29 @@ namespace Cubix.UnityCli
             }
         }
 
+        public static void RefreshBusyKeepAlive(CommandActivitySnapshot activity)
+        {
+            if (activity == null || (!activity.busy && activity.queuedCount <= 0))
+            {
+                return;
+            }
+
+            JObject snapshot;
+            lock (SnapshotLock)
+            {
+                if (_cachedStatusSnapshot == null)
+                {
+                    return;
+                }
+
+                snapshot = JObject.FromObject(_cachedStatusSnapshot);
+            }
+
+            ApplyCommandActivity(snapshot, activity);
+            snapshot["lastUpdatedUtc"] = DateTime.UtcNow.ToString("o");
+            WriteSnapshotFiles(HttpServer.AdvertisedPort, HttpServer.IsRunning ? HttpServer.Url : HttpServer.AdvertisedUrl, snapshot);
+        }
+
         public static void PrepareForReload()
         {
             ConnectorPaths.EnsureDirectories();
@@ -86,16 +110,22 @@ namespace Cubix.UnityCli
             var verify = CompilationAwaiter.GetVerifyJob();
             var test = TestRunController.GetCurrentJob();
             var playMode = PlayModeTransitionController.GetCurrentJob();
+            var sceneOpen = SceneOpenController.GetCurrentJob();
+            var sceneOpenPending = SceneOpenController.HasPendingOpen();
             var commands = ToolDiscovery.GetCommandMetadata();
             var activeScene = BuildActiveSceneSnapshot();
             var reloading = ConnectionService.IsReloading;
+            var connection = ConnectionService.GetSnapshot();
             var ready = connected &&
                         !reloading &&
+                        !connection.busy &&
                         !EditorApplication.isCompiling &&
                         !EditorApplication.isUpdating &&
                         !CompilationAwaiter.HasPendingVerifyJob() &&
+                        !sceneOpenPending &&
                         !TestRunController.HasPendingRun() &&
                         !PlayModeTransitionController.HasPendingTransition();
+            var message = BuildStatusMessage(connected, reloading, connection, SceneOpenController.GetPendingMessage());
             return new
             {
                 projectName = ConnectorPaths.ProjectName,
@@ -115,12 +145,17 @@ namespace Cubix.UnityCli
                 activeScene,
                 ready,
                 reloading,
+                busy = connection.busy,
+                busyCommand = connection.busyCommand,
+                queuedCommands = connection.queuedCommands,
+                message,
                 verify,
                 test,
                 playMode,
+                sceneOpen,
                 commandCount = commands.Count,
                 commands,
-                connection = ConnectionService.GetSnapshot(),
+                connection,
                 lastUpdatedUtc = DateTime.UtcNow.ToString("o")
             };
         }
@@ -252,6 +287,97 @@ namespace Cubix.UnityCli
             }
 
             WriteJson(path, json);
+        }
+
+        private static string BuildStatusMessage(bool connected, bool reloading, ConnectionSnapshot connection, string sceneOpenMessage)
+        {
+            if (connection != null && connection.busy && !string.IsNullOrWhiteSpace(connection.busyCommand))
+            {
+                return "Cubix Unity CLI is processing '" + connection.busyCommand + "'.";
+            }
+
+            if (connection != null && connection.queuedCommands > 0)
+            {
+                return "Cubix Unity CLI has queued commands waiting to run.";
+            }
+
+            if (connection != null && connection.busy)
+            {
+                return "Cubix Unity CLI is processing a command.";
+            }
+
+            if (!string.IsNullOrWhiteSpace(sceneOpenMessage))
+            {
+                return sceneOpenMessage;
+            }
+
+            if (reloading)
+            {
+                return "Unity is reconnecting after assembly reload.";
+            }
+
+            if (!connected)
+            {
+                return "Cubix Unity CLI is disconnected.";
+            }
+
+            if (EditorApplication.isUpdating)
+            {
+                return "Unity is refreshing assets.";
+            }
+
+            if (EditorApplication.isCompiling)
+            {
+                return "Unity is compiling scripts.";
+            }
+
+            if (CompilationAwaiter.HasPendingVerifyJob())
+            {
+                return "Unity is running verify.";
+            }
+
+            if (TestRunController.HasPendingRun())
+            {
+                return "Unity is running tests.";
+            }
+
+            if (PlayModeTransitionController.HasPendingTransition())
+            {
+                return "Unity is changing play mode.";
+            }
+
+            return "Cubix Unity CLI is ready.";
+        }
+
+        private static void ApplyCommandActivity(JObject snapshot, CommandActivitySnapshot activity)
+        {
+            if (snapshot == null || activity == null)
+            {
+                return;
+            }
+
+            var busy = activity.busy || activity.queuedCount > 0;
+            var message = activity.busy && !string.IsNullOrWhiteSpace(activity.command)
+                ? "Cubix Unity CLI is processing '" + activity.command + "'."
+                : activity.queuedCount > 0
+                    ? "Cubix Unity CLI has queued commands waiting to run."
+                    : "Cubix Unity CLI is processing a command.";
+
+            snapshot["ready"] = false;
+            snapshot["busy"] = busy;
+            snapshot["busyCommand"] = activity.command;
+            snapshot["queuedCommands"] = activity.queuedCount;
+            snapshot["message"] = message;
+
+            var connection = snapshot["connection"] as JObject ?? new JObject();
+            connection["ready"] = false;
+            connection["busy"] = busy;
+            connection["busyCommand"] = activity.command;
+            connection["busyRequestId"] = activity.requestId;
+            connection["busyStartedAtUtc"] = activity.startedAtUtc;
+            connection["busyDurationMs"] = activity.durationMs;
+            connection["queuedCommands"] = activity.queuedCount;
+            snapshot["connection"] = connection;
         }
 
         private static void TryDelete(string path)

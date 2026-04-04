@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -10,6 +11,16 @@ using UnityEditor;
 
 namespace Cubix.UnityCli
 {
+    internal sealed class CommandActivitySnapshot
+    {
+        public bool busy;
+        public string command;
+        public string requestId;
+        public string startedAtUtc;
+        public long durationMs;
+        public int queuedCount;
+    }
+
     internal static class HttpServer
     {
         private const string PortEditorPrefKey = "Cubix.UnityCli.Port";
@@ -21,9 +32,16 @@ namespace Cubix.UnityCli
         }
 
         private static readonly ConcurrentQueue<QueuedRequest> Queue = new ConcurrentQueue<QueuedRequest>();
+        private static readonly object ActivityLock = new object();
 
         private static HttpListener _listener;
         private static bool _processing;
+        private static int _queuedCount;
+        private static string _activeCommand;
+        private static string _activeRequestId;
+        private static DateTime _processingStartedAtUtc;
+        private static CancellationTokenSource _keepAliveCancellation;
+        private static Task _keepAliveTask;
 
         static HttpServer()
         {
@@ -77,6 +95,7 @@ namespace Cubix.UnityCli
                 Port = port;
                 EditorPrefs.SetInt(PortEditorPrefKey, port);
                 LastError = null;
+                StartKeepAliveLoop();
                 Task.Run(ListenLoop);
                 return true;
             }
@@ -179,12 +198,21 @@ namespace Cubix.UnityCli
                     requestId = payload.Value<string>("requestId")
                 };
 
-                var completion = new TaskCompletionSource<object>();
-                Queue.Enqueue(new QueuedRequest
+                var completion = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+                lock (ActivityLock)
                 {
-                    Request = commandRequest,
-                    Completion = completion
-                });
+                    if (_processing || _queuedCount > 0)
+                    {
+                        return BuildBusyResponse(commandRequest);
+                    }
+
+                    Queue.Enqueue(new QueuedRequest
+                    {
+                        Request = commandRequest,
+                        Completion = completion
+                    });
+                    _queuedCount++;
+                }
 
                 return await completion.Task;
             }
@@ -192,19 +220,28 @@ namespace Cubix.UnityCli
 
         private static void ProcessQueue()
         {
-            if (_processing || !Queue.TryDequeue(out var next))
+            QueuedRequest next;
+            lock (ActivityLock)
             {
-                return;
+                if (_processing || !Queue.TryDequeue(out next))
+                {
+                    return;
+                }
+
+                _processing = true;
+                _queuedCount = Math.Max(0, _queuedCount - 1);
+                _activeCommand = next.Request?.command;
+                _activeRequestId = next.Request?.requestId;
+                _processingStartedAtUtc = DateTime.UtcNow;
             }
 
-            _processing = true;
             try
             {
-                next.Completion.SetResult(CommandRouter.Route(next.Request));
+                next.Completion.TrySetResult(CommandRouter.Route(next.Request));
             }
             catch (Exception exception)
             {
-                next.Completion.SetResult(new CommandErrorResponse("Command dispatch failed.", errors: new[]
+                next.Completion.TrySetResult(new CommandErrorResponse("Command dispatch failed.", errors: new[]
                 {
                     new
                     {
@@ -215,12 +252,37 @@ namespace Cubix.UnityCli
             }
             finally
             {
-                _processing = false;
+                lock (ActivityLock)
+                {
+                    _processing = false;
+                    _activeCommand = null;
+                    _activeRequestId = null;
+                    _processingStartedAtUtc = default;
+                }
+            }
+        }
+
+        public static CommandActivitySnapshot GetCommandActivitySnapshot()
+        {
+            lock (ActivityLock)
+            {
+                return new CommandActivitySnapshot
+                {
+                    busy = _processing,
+                    command = _activeCommand,
+                    requestId = _activeRequestId,
+                    startedAtUtc = _processing ? _processingStartedAtUtc.ToString("o") : null,
+                    durationMs = _processing
+                        ? (long)Math.Max((DateTime.UtcNow - _processingStartedAtUtc).TotalMilliseconds, 0d)
+                        : 0L,
+                    queuedCount = _queuedCount
+                };
             }
         }
 
         public static void Stop()
         {
+            StopKeepAliveLoop();
             try
             {
                 _listener?.Stop();
@@ -233,6 +295,84 @@ namespace Cubix.UnityCli
             {
                 _listener = null;
                 Port = 0;
+                lock (ActivityLock)
+                {
+                    _processing = false;
+                    _queuedCount = 0;
+                    _activeCommand = null;
+                    _activeRequestId = null;
+                    _processingStartedAtUtc = default;
+                    while (Queue.TryDequeue(out var pending))
+                    {
+                        pending?.Completion?.TrySetResult(new CommandErrorResponse("Command was canceled because the Cubix Unity CLI connection stopped."));
+                    }
+                }
+            }
+        }
+
+        private static object BuildBusyResponse(CommandRequest request)
+        {
+            var snapshot = GetCommandActivitySnapshot();
+            return new CommandErrorResponse("Another Cubix command is already running.", errors: new[]
+            {
+                new
+                {
+                    code = "command_busy",
+                    requestedCommand = request?.command,
+                    activeCommand = snapshot.command,
+                    activeRequestId = snapshot.requestId,
+                    activeStartedAtUtc = snapshot.startedAtUtc,
+                    activeDurationMs = snapshot.durationMs,
+                    queuedCount = snapshot.queuedCount
+                }
+            });
+        }
+
+        private static void StartKeepAliveLoop()
+        {
+            StopKeepAliveLoop();
+            _keepAliveCancellation = new CancellationTokenSource();
+            _keepAliveTask = Task.Run(() => CommandKeepAliveLoopAsync(_keepAliveCancellation.Token));
+        }
+
+        private static void StopKeepAliveLoop()
+        {
+            try
+            {
+                _keepAliveCancellation?.Cancel();
+            }
+            catch
+            {
+            }
+            finally
+            {
+                _keepAliveCancellation?.Dispose();
+                _keepAliveCancellation = null;
+                _keepAliveTask = null;
+            }
+        }
+
+        private static async Task CommandKeepAliveLoopAsync(CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    var snapshot = GetCommandActivitySnapshot();
+                    if (IsRunning && (snapshot.busy || snapshot.queuedCount > 0))
+                    {
+                        HeartbeatService.RefreshBusyKeepAlive(snapshot);
+                    }
+
+                    await Task.Delay(1000, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch
+                {
+                }
             }
         }
 

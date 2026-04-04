@@ -1,6 +1,6 @@
 {
   "name": "com.cubix.unity-cli",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "displayName": "Cubix Unity CLI",
   "description": "Unity package for Cubix Unity CLI connection, setup, and skill installation.",
   "unity": "2022.3",

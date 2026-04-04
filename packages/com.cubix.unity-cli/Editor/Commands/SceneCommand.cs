@@ -29,6 +29,12 @@ namespace Cubix.UnityCli
             };
             yield return new CommandDefinition
             {
+                Action = "status",
+                Description = "Read the current scene open job state.",
+                Tags = CommandMetadata.Tags(CommandTags.Core, CommandTags.Scene, CommandTags.Diagnostics)
+            };
+            yield return new CommandDefinition
+            {
                 Action = "find",
                 Description = "Search scene objects by name, path, or tag.",
                 Tags = CommandMetadata.Tags(CommandTags.Scene, CommandTags.Object),
@@ -48,7 +54,8 @@ namespace Cubix.UnityCli
                 SafetyLevel = CommandSafetyLevels.Destructive,
                 SupportsPreflight = true,
                 Parameters = CommandMetadata.Parameters(
-                    CommandMetadata.Parameter("path", "string", true, "Scene asset path to open."))
+                    CommandMetadata.Parameter("path", "string", true, "Scene asset path to open."),
+                    CommandMetadata.Parameter("timeoutMs", "integer", false, "Maximum time the scene open request should remain pending.", 120000))
             };
         }
 
@@ -69,6 +76,8 @@ namespace Cubix.UnityCli
                         isLoaded = scene.isLoaded,
                         rootCount = scene.rootCount
                     });
+                case "status":
+                    return new CommandSuccessResponse("Scene open status.", SceneOpenController.GetCurrentJob());
                 case "find":
                     var targetPath = parameters.Value<string>("path");
                     if (!string.IsNullOrWhiteSpace(targetPath))
@@ -116,9 +125,7 @@ namespace Cubix.UnityCli
                 return new CommandErrorResponse("Scene open validation failed.", preflight);
             }
 
-            var scenePath = ObjectResolver.NormalizeAssetPath(parameters?.Value<string>("path"));
-            var openedScene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
-            return new CommandSuccessResponse("Scene opened.", BuildSceneDescriptor(openedScene));
+            return new CommandSuccessResponse("Scene open queued.", SceneOpenController.StartOpen(parameters));
         }
 
         private static CommandPreflightResult ValidateOpenScene(JObject parameters)

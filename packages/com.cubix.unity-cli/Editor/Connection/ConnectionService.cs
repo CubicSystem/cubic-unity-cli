@@ -13,6 +13,12 @@ namespace Cubix.UnityCli
         public bool ready;
         public bool reloading;
         public int commandCount;
+        public bool busy;
+        public string busyCommand;
+        public string busyRequestId;
+        public string busyStartedAtUtc;
+        public long busyDurationMs;
+        public int queuedCommands;
     }
 
     [InitializeOnLoad]
@@ -90,6 +96,8 @@ namespace Cubix.UnityCli
         public static ConnectionSnapshot GetSnapshot()
         {
             var connected = HttpServer.IsRunning && !IsReloading;
+            var commandActivity = HttpServer.GetCommandActivitySnapshot();
+            var busy = commandActivity.busy || commandActivity.queuedCount > 0;
             return new ConnectionSnapshot
             {
                 connected = connected,
@@ -99,13 +107,21 @@ namespace Cubix.UnityCli
                 projectHash = ConnectorPaths.ProjectHash,
                 lastError = string.IsNullOrWhiteSpace(LastError) ? HttpServer.LastError : LastError,
                 ready = connected &&
+                        !busy &&
                         !EditorApplication.isCompiling &&
                         !EditorApplication.isUpdating &&
                         !CompilationAwaiter.HasPendingVerifyJob() &&
+                        !SceneOpenController.HasPendingOpen() &&
                         !TestRunController.HasPendingRun() &&
                         !PlayModeTransitionController.HasPendingTransition(),
                 reloading = IsReloading,
-                commandCount = CommandRouter.ListCommands(includeUnsafe: true).Count
+                commandCount = CommandRouter.ListCommands(includeUnsafe: true).Count,
+                busy = busy,
+                busyCommand = commandActivity.command,
+                busyRequestId = commandActivity.requestId,
+                busyStartedAtUtc = commandActivity.startedAtUtc,
+                busyDurationMs = commandActivity.durationMs,
+                queuedCommands = commandActivity.queuedCount
             };
         }
 
