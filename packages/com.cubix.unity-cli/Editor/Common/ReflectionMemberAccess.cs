@@ -3,12 +3,25 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json.Linq;
+using UnityEngine;
 
 namespace Cubix.UnityCli
 {
     internal static class ReflectionMemberAccess
     {
         private const BindingFlags MemberFlags = BindingFlags.Instance | BindingFlags.Public;
+        private static readonly Dictionary<Type, HashSet<string>> BlockedReadablePropertiesByType =
+            new Dictionary<Type, HashSet<string>>
+            {
+                {
+                    typeof(Transform),
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        "localToWorldMatrix",
+                        "worldToLocalMatrix"
+                    }
+                }
+            };
 
         public static IEnumerable<string> ListMembers(Type type)
         {
@@ -23,7 +36,9 @@ namespace Cubix.UnityCli
 
             foreach (var property in type.GetProperties(MemberFlags))
             {
-                if (property.CanRead && property.GetIndexParameters().Length == 0)
+                if (property.CanRead &&
+                    property.GetIndexParameters().Length == 0 &&
+                    !IsBlockedReadableProperty(type, property.Name))
                 {
                     names.Add(property.Name);
                 }
@@ -49,6 +64,12 @@ namespace Cubix.UnityCli
             if (field != null)
             {
                 return field.GetValue(instance);
+            }
+
+            if (IsBlockedReadableProperty(type, memberName))
+            {
+                throw new InvalidOperationException(
+                    "Reading member '" + memberName + "' on type '" + type.FullName + "' is disabled for snapshot safety.");
             }
 
             var property = type.GetProperty(memberName, MemberFlags | BindingFlags.IgnoreCase);
@@ -101,6 +122,19 @@ namespace Cubix.UnityCli
             }
 
             throw new InvalidOperationException("Could not write member '" + memberName + "' on type '" + type.FullName + "'.");
+        }
+
+        private static bool IsBlockedReadableProperty(Type type, string memberName)
+        {
+            foreach (var entry in BlockedReadablePropertiesByType)
+            {
+                if (entry.Key.IsAssignableFrom(type) && entry.Value.Contains(memberName))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

@@ -23,7 +23,9 @@ namespace Cubix.UnityCli
                 Tags = CommandMetadata.Tags(CommandTags.Runtime, CommandTags.Object),
                 Parameters = CommandMetadata.Parameters(
                     CommandMetadata.Parameter("target", "string", true, "Target runtime object."),
-                    CommandMetadata.Parameter("component", "string", false, "Optional component type name."))
+                    CommandMetadata.Parameter("component", "string", false, "Optional component type name."),
+                    CommandMetadata.Parameter("includeComponents", "boolean", false, "Include component snapshots for the GameObject result.", false),
+                    CommandMetadata.Parameter("maxDepth", "integer", false, "Maximum child depth to include in the GameObject result.", 1))
             };
             yield return new CommandDefinition
             {
@@ -100,7 +102,9 @@ namespace Cubix.UnityCli
 
             if (string.IsNullOrWhiteSpace(parameters.Value<string>("component")))
             {
-                return new CommandSuccessResponse("Runtime GameObject.", ObjectSnapshotter.SnapshotGameObject(gameObject, true, 0, 2));
+                var includeComponents = parameters.Value<bool?>("includeComponents") ?? false;
+                var maxDepth = Mathf.Clamp(parameters.Value<int?>("maxDepth") ?? 1, 0, 6);
+                return new CommandSuccessResponse("Runtime GameObject.", ObjectSnapshotter.SnapshotGameObject(gameObject, includeComponents, 0, maxDepth));
             }
 
             var error = ObjectCommand.TryResolveComponent(parameters, out _, out var component);
@@ -158,7 +162,7 @@ namespace Cubix.UnityCli
                 }
             }
 
-            return new CommandSuccessResponse("Runtime mutation applied.", ObjectSnapshotter.SnapshotGameObject(gameObject, true, 0, 2));
+            return new CommandSuccessResponse("Runtime mutation applied.", ObjectSnapshotter.SnapshotGameObject(gameObject, false, 0, 0));
         }
 
         private static CommandPreflightResult ValidateMutation(JObject parameters)

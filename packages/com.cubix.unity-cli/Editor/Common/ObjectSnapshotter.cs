@@ -29,7 +29,7 @@ namespace Cubix.UnityCli
             };
         }
 
-        public static object SnapshotGameObject(GameObject gameObject, bool includeComponents = true, int depth = 0, int maxDepth = 4)
+        public static object SnapshotGameObject(GameObject gameObject, bool includeComponents = false, int depth = 0, int maxDepth = 4)
         {
             if (gameObject == null)
             {
@@ -107,7 +107,16 @@ namespace Cubix.UnityCli
 
             if (!string.IsNullOrWhiteSpace(memberName))
             {
-                var single = ReflectionMemberAccess.ReadMember(instance, memberName);
+                object single;
+                try
+                {
+                    single = ReflectionMemberAccess.ReadMember(instance, memberName);
+                }
+                catch
+                {
+                    single = "<unavailable>";
+                }
+
                 return new Dictionary<string, object>
                 {
                     { memberName, ValueSerializer.Serialize(single) }

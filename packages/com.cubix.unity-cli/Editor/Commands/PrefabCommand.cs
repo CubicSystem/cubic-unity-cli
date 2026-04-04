@@ -110,7 +110,7 @@ namespace Cubix.UnityCli
             }
 
             ObjectCommand.MarkDirty(instance);
-            return new CommandSuccessResponse("Prefab instantiated.", ObjectSnapshotter.SnapshotGameObject(instance, true, 0, 1));
+            return new CommandSuccessResponse("Prefab instantiated.", ObjectSnapshotter.SnapshotGameObject(instance, false, 0, 1));
         }
 
         private static object SaveAndConnect(JObject parameters)

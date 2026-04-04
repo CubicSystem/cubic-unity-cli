@@ -187,7 +187,7 @@ namespace Cubix.UnityCli
             }
 
             MarkDirty(gameObject);
-            return new CommandSuccessResponse("GameObject created.", ObjectSnapshotter.SnapshotGameObject(gameObject, true, 0, 1));
+            return new CommandSuccessResponse("GameObject created.", ObjectSnapshotter.SnapshotGameObject(gameObject, false, 0, 1));
         }
 
         private static object SetActive(JObject parameters)
