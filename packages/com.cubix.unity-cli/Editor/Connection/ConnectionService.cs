@@ -18,7 +18,11 @@ namespace Cubix.UnityCli
         public string busyRequestId;
         public string busyStartedAtUtc;
         public long busyDurationMs;
+        public bool busyStale;
+        public long busyStaleAfterMs;
         public int queuedCommands;
+        public string queuedStartedAtUtc;
+        public long queuedDurationMs;
     }
 
     [InitializeOnLoad]
@@ -121,7 +125,11 @@ namespace Cubix.UnityCli
                 busyRequestId = commandActivity.requestId,
                 busyStartedAtUtc = commandActivity.startedAtUtc,
                 busyDurationMs = commandActivity.durationMs,
-                queuedCommands = commandActivity.queuedCount
+                busyStale = commandActivity.stale,
+                busyStaleAfterMs = commandActivity.staleAfterMs,
+                queuedCommands = commandActivity.queuedCount,
+                queuedStartedAtUtc = commandActivity.queuedStartedAtUtc,
+                queuedDurationMs = commandActivity.queuedDurationMs
             };
         }
 

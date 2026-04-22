@@ -147,7 +147,11 @@ namespace Cubix.UnityCli
                 reloading,
                 busy = connection.busy,
                 busyCommand = connection.busyCommand,
+                busyStale = connection.busyStale,
+                busyStaleAfterMs = connection.busyStaleAfterMs,
                 queuedCommands = connection.queuedCommands,
+                queuedStartedAtUtc = connection.queuedStartedAtUtc,
+                queuedDurationMs = connection.queuedDurationMs,
                 message,
                 verify,
                 test,
@@ -291,6 +295,16 @@ namespace Cubix.UnityCli
 
         private static string BuildStatusMessage(bool connected, bool reloading, ConnectionSnapshot connection, string sceneOpenMessage)
         {
+            if (connection != null && connection.busyStale && !string.IsNullOrWhiteSpace(connection.busyCommand))
+            {
+                return "Cubix Unity CLI command '" + connection.busyCommand + "' has been running longer than expected.";
+            }
+
+            if (connection != null && connection.busyStale)
+            {
+                return "Cubix Unity CLI has a stale pending command.";
+            }
+
             if (connection != null && connection.busy && !string.IsNullOrWhiteSpace(connection.busyCommand))
             {
                 return "Cubix Unity CLI is processing '" + connection.busyCommand + "'.";
@@ -362,11 +376,20 @@ namespace Cubix.UnityCli
                 : activity.queuedCount > 0
                     ? "Cubix Unity CLI has queued commands waiting to run."
                     : "Cubix Unity CLI is processing a command.";
+            if (activity.stale && !string.IsNullOrWhiteSpace(activity.command))
+            {
+                message = "Cubix Unity CLI command '" + activity.command + "' has been running longer than expected.";
+            }
+            else if (activity.stale)
+            {
+                message = "Cubix Unity CLI has a stale pending command.";
+            }
 
             snapshot["ready"] = false;
             snapshot["busy"] = busy;
             snapshot["busyCommand"] = activity.command;
             snapshot["queuedCommands"] = activity.queuedCount;
+            snapshot["busyStale"] = activity.stale;
             snapshot["message"] = message;
 
             var connection = snapshot["connection"] as JObject ?? new JObject();
@@ -376,7 +399,11 @@ namespace Cubix.UnityCli
             connection["busyRequestId"] = activity.requestId;
             connection["busyStartedAtUtc"] = activity.startedAtUtc;
             connection["busyDurationMs"] = activity.durationMs;
+            connection["busyStale"] = activity.stale;
+            connection["busyStaleAfterMs"] = activity.staleAfterMs;
             connection["queuedCommands"] = activity.queuedCount;
+            connection["queuedStartedAtUtc"] = activity.queuedStartedAtUtc;
+            connection["queuedDurationMs"] = activity.queuedDurationMs;
             snapshot["connection"] = connection;
         }
 

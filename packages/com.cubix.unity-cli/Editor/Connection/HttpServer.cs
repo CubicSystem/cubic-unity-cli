@@ -14,21 +14,29 @@ namespace Cubix.UnityCli
     internal sealed class CommandActivitySnapshot
     {
         public bool busy;
+        public bool stale;
         public string command;
         public string requestId;
         public string startedAtUtc;
         public long durationMs;
+        public long staleAfterMs;
         public int queuedCount;
+        public string queuedStartedAtUtc;
+        public long queuedDurationMs;
     }
 
     internal static class HttpServer
     {
         private const string PortEditorPrefKey = "Cubix.UnityCli.Port";
+        private const int QueuePickupTimeoutMs = 5000;
+        private const int BusyStaleAfterMs = 30000;
 
         private sealed class QueuedRequest
         {
             public CommandRequest Request { get; set; }
             public TaskCompletionSource<object> Completion { get; set; }
+            public DateTime EnqueuedAtUtc { get; set; }
+            public int State;
         }
 
         private static readonly ConcurrentQueue<QueuedRequest> Queue = new ConcurrentQueue<QueuedRequest>();
@@ -40,6 +48,7 @@ namespace Cubix.UnityCli
         private static string _activeCommand;
         private static string _activeRequestId;
         private static DateTime _processingStartedAtUtc;
+        private static DateTime _oldestQueuedAtUtc;
         private static CancellationTokenSource _keepAliveCancellation;
         private static Task _keepAliveTask;
 
@@ -199,6 +208,13 @@ namespace Cubix.UnityCli
                 };
 
                 var completion = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var queuedRequest = new QueuedRequest
+                {
+                    Request = commandRequest,
+                    Completion = completion,
+                    EnqueuedAtUtc = DateTime.UtcNow
+                };
+
                 lock (ActivityLock)
                 {
                     if (_processing || _queuedCount > 0)
@@ -206,12 +222,27 @@ namespace Cubix.UnityCli
                         return BuildBusyResponse(commandRequest);
                     }
 
-                    Queue.Enqueue(new QueuedRequest
-                    {
-                        Request = commandRequest,
-                        Completion = completion
-                    });
+                    Queue.Enqueue(queuedRequest);
                     _queuedCount++;
+                    _oldestQueuedAtUtc = queuedRequest.EnqueuedAtUtc;
+                }
+
+                var completed = await Task.WhenAny(completion.Task, Task.Delay(QueuePickupTimeoutMs));
+                if (completed != completion.Task &&
+                    Interlocked.CompareExchange(ref queuedRequest.State, 3, 0) == 0)
+                {
+                    object response = BuildPendingTimeoutResponse(commandRequest, queuedRequest.EnqueuedAtUtc);
+                    lock (ActivityLock)
+                    {
+                        _queuedCount = Math.Max(0, _queuedCount - 1);
+                        if (_queuedCount == 0)
+                        {
+                            _oldestQueuedAtUtc = default;
+                        }
+                    }
+
+                    completion.TrySetResult(response);
+                    return response;
                 }
 
                 return await completion.Task;
@@ -220,19 +251,38 @@ namespace Cubix.UnityCli
 
         private static void ProcessQueue()
         {
-            QueuedRequest next;
-            lock (ActivityLock)
+            QueuedRequest next = null;
+            while (next == null)
             {
-                if (_processing || !Queue.TryDequeue(out next))
+                lock (ActivityLock)
                 {
-                    return;
-                }
+                    if (_processing)
+                    {
+                        return;
+                    }
 
-                _processing = true;
-                _queuedCount = Math.Max(0, _queuedCount - 1);
-                _activeCommand = next.Request?.command;
-                _activeRequestId = next.Request?.requestId;
-                _processingStartedAtUtc = DateTime.UtcNow;
+                    if (!Queue.TryDequeue(out next))
+                    {
+                        return;
+                    }
+
+                    if (Interlocked.CompareExchange(ref next.State, 1, 0) != 0)
+                    {
+                        next = null;
+                        continue;
+                    }
+
+                    _processing = true;
+                    _queuedCount = Math.Max(0, _queuedCount - 1);
+                    if (_queuedCount == 0)
+                    {
+                        _oldestQueuedAtUtc = default;
+                    }
+
+                    _activeCommand = next.Request?.command;
+                    _activeRequestId = next.Request?.requestId;
+                    _processingStartedAtUtc = DateTime.UtcNow;
+                }
             }
 
             try
@@ -252,6 +302,7 @@ namespace Cubix.UnityCli
             }
             finally
             {
+                Interlocked.Exchange(ref next.State, 2);
                 lock (ActivityLock)
                 {
                     _processing = false;
@@ -266,16 +317,26 @@ namespace Cubix.UnityCli
         {
             lock (ActivityLock)
             {
+                var durationMs = _processing
+                    ? (long)Math.Max((DateTime.UtcNow - _processingStartedAtUtc).TotalMilliseconds, 0d)
+                    : 0L;
+                var queuedDurationMs = _queuedCount > 0 && _oldestQueuedAtUtc != default
+                    ? (long)Math.Max((DateTime.UtcNow - _oldestQueuedAtUtc).TotalMilliseconds, 0d)
+                    : 0L;
                 return new CommandActivitySnapshot
                 {
                     busy = _processing,
+                    stale = durationMs >= BusyStaleAfterMs || queuedDurationMs >= QueuePickupTimeoutMs,
                     command = _activeCommand,
                     requestId = _activeRequestId,
                     startedAtUtc = _processing ? _processingStartedAtUtc.ToString("o") : null,
-                    durationMs = _processing
-                        ? (long)Math.Max((DateTime.UtcNow - _processingStartedAtUtc).TotalMilliseconds, 0d)
-                        : 0L,
-                    queuedCount = _queuedCount
+                    durationMs = durationMs,
+                    staleAfterMs = BusyStaleAfterMs,
+                    queuedCount = _queuedCount,
+                    queuedStartedAtUtc = _queuedCount > 0 && _oldestQueuedAtUtc != default
+                        ? _oldestQueuedAtUtc.ToString("o")
+                        : null,
+                    queuedDurationMs = queuedDurationMs
                 };
             }
         }
@@ -302,8 +363,10 @@ namespace Cubix.UnityCli
                     _activeCommand = null;
                     _activeRequestId = null;
                     _processingStartedAtUtc = default;
+                    _oldestQueuedAtUtc = default;
                     while (Queue.TryDequeue(out var pending))
                     {
+                        Interlocked.Exchange(ref pending.State, 3);
                         pending?.Completion?.TrySetResult(new CommandErrorResponse("Command was canceled because the Cubix Unity CLI connection stopped."));
                     }
                 }
@@ -323,7 +386,36 @@ namespace Cubix.UnityCli
                     activeRequestId = snapshot.requestId,
                     activeStartedAtUtc = snapshot.startedAtUtc,
                     activeDurationMs = snapshot.durationMs,
-                    queuedCount = snapshot.queuedCount
+                    activeStale = snapshot.stale,
+                    activeStaleAfterMs = snapshot.staleAfterMs,
+                    queuedCount = snapshot.queuedCount,
+                    queuedStartedAtUtc = snapshot.queuedStartedAtUtc,
+                    queuedDurationMs = snapshot.queuedDurationMs
+                }
+            });
+        }
+
+        private static object BuildPendingTimeoutResponse(CommandRequest request, DateTime queuedAtUtc)
+        {
+            var snapshot = GetCommandActivitySnapshot();
+            return new CommandErrorResponse("Cubix command was not picked up by the Unity editor update loop before the timeout.", errors: new[]
+            {
+                new
+                {
+                    code = "command_pending_timeout",
+                    requestedCommand = request?.command,
+                    queuedStartedAtUtc = queuedAtUtc.ToString("o"),
+                    queuedDurationMs = (long)Math.Max((DateTime.UtcNow - queuedAtUtc).TotalMilliseconds, 0d),
+                    queuePickupTimeoutMs = QueuePickupTimeoutMs,
+                    activeCommand = snapshot.command,
+                    activeRequestId = snapshot.requestId,
+                    activeStartedAtUtc = snapshot.startedAtUtc,
+                    activeDurationMs = snapshot.durationMs,
+                    activeStale = snapshot.stale,
+                    activeStaleAfterMs = snapshot.staleAfterMs,
+                    queuedCount = snapshot.queuedCount,
+                    currentQueuedStartedAtUtc = snapshot.queuedStartedAtUtc,
+                    currentQueuedDurationMs = snapshot.queuedDurationMs
                 }
             });
         }

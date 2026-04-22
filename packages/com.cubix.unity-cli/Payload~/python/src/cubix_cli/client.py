@@ -12,6 +12,34 @@ class ClientError(RuntimeError):
     """Raised when the Unity connector request fails."""
 
 
+def _format_connector_error(decoded: Dict[str, Any]) -> str:
+    message = str(decoded.get("message") or "Connector command failed.")
+    errors = decoded.get("errors")
+    if not isinstance(errors, list) or not errors:
+        return message
+
+    first = errors[0]
+    if not isinstance(first, dict):
+        return message
+
+    details = []
+    for key in (
+        "code",
+        "requestedCommand",
+        "activeCommand",
+        "activeDurationMs",
+        "activeStale",
+        "queuedCount",
+        "queuedDurationMs",
+        "queuePickupTimeoutMs",
+    ):
+        value = first.get(key)
+        if value is not None:
+            details.append(f"{key}={value}")
+
+    return f"{message} ({', '.join(details)})" if details else message
+
+
 @dataclass
 class UnityClient:
     base_url: str
@@ -66,7 +94,7 @@ class UnityClient:
                     error = ClientError(f"Connector returned invalid JSON: {body}")
                 else:
                     if not decoded.get("success", False):
-                        raise ClientError(decoded.get("message", "Connector command failed."))
+                        raise ClientError(_format_connector_error(decoded))
                     return decoded
 
             if attempt >= retries:

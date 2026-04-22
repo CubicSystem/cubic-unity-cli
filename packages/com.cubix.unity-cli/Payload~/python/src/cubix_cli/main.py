@@ -26,6 +26,8 @@ WAIT_LOOP_INTERVAL_SECONDS = 1.0
 PLAYTEST_POLL_INTERVAL_SECONDS = 0.5
 CONNECTOR_RESOLVE_TIMEOUT_SECONDS = 20.0
 CONNECTOR_RESOLVE_RETRY_SECONDS = 0.5
+COMMAND_BUSY_FAIL_FAST_SECONDS = 30.0
+COMMAND_PENDING_FAIL_FAST_SECONDS = 5.0
 
 
 def parse_bool(value: str) -> bool:
@@ -241,6 +243,71 @@ def handle_verify(args: argparse.Namespace) -> int:
         return 1
 
 
+def _number_value(value: Any) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    return 0.0
+
+
+def get_command_activity(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    connection = snapshot.get("connection")
+    if not isinstance(connection, dict):
+        connection = {}
+
+    queued_count = max(
+        int(_number_value(snapshot.get("queuedCommands"))),
+        int(_number_value(connection.get("queuedCommands"))),
+    )
+    busy_duration_ms = max(
+        _number_value(snapshot.get("busyDurationMs")),
+        _number_value(connection.get("busyDurationMs")),
+    )
+    queued_duration_ms = max(
+        _number_value(snapshot.get("queuedDurationMs")),
+        _number_value(connection.get("queuedDurationMs")),
+    )
+    busy = bool(snapshot.get("busy")) or bool(connection.get("busy")) or queued_count > 0
+    stale = bool(snapshot.get("busyStale")) or bool(connection.get("busyStale"))
+    stale = stale or busy_duration_ms >= COMMAND_BUSY_FAIL_FAST_SECONDS * 1000.0
+    stale = stale or queued_duration_ms >= COMMAND_PENDING_FAIL_FAST_SECONDS * 1000.0
+
+    return {
+        "busy": busy,
+        "stale": stale,
+        "command": snapshot.get("busyCommand") or connection.get("busyCommand"),
+        "busyDurationMs": busy_duration_ms,
+        "queuedCommands": queued_count,
+        "queuedDurationMs": queued_duration_ms,
+    }
+
+
+def build_command_activity_timeout_state(
+    snapshot: Dict[str, Any],
+    fallback_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    activity = get_command_activity(snapshot)
+    command = activity.get("command") or "queued command"
+    duration_seconds = max(
+        activity.get("busyDurationMs", 0.0),
+        activity.get("queuedDurationMs", 0.0),
+    ) / 1000.0
+    state: Dict[str, Any] = {
+        "success": False,
+        "state": "timed_out",
+        "failureType": "command_pending_timeout",
+        "message": (
+            f"Cubix Unity CLI is still busy with {command!r} after "
+            f"{duration_seconds:.1f}s; aborting this wait instead of pending indefinitely."
+        ),
+        "status": snapshot,
+    }
+    if fallback_id:
+        state["id"] = fallback_id
+    return state
+
+
 def wait_for_verify(args: argparse.Namespace, job_id: str, timeout_seconds: float) -> Dict[str, Any]:
     deadline = time.monotonic() + timeout_seconds + 15.0
     last_state: Dict[str, Any] = {"id": job_id, "state": "pending"}
@@ -248,7 +315,11 @@ def wait_for_verify(args: argparse.Namespace, job_id: str, timeout_seconds: floa
 
     while time.monotonic() < deadline:
         try:
-            verify = fetch_status_snapshot(args, allow_file_fallback=True).get("verify")
+            snapshot = fetch_status_snapshot(args, allow_file_fallback=True)
+            if get_command_activity(snapshot).get("stale"):
+                return build_command_activity_timeout_state(snapshot, job_id)
+
+            verify = snapshot.get("verify")
             if verify and verify.get("id") == job_id:
                 last_state = verify
                 if verify.get("success") is not None:
@@ -307,7 +378,13 @@ def wait_for_test(args: argparse.Namespace, job_id: str, timeout_seconds: float)
 
     while time.monotonic() < deadline:
         try:
-            test_state = get_test_state_from_snapshot(fetch_status_snapshot(args, allow_file_fallback=True))
+            snapshot = fetch_status_snapshot(args, allow_file_fallback=True)
+            if get_command_activity(snapshot).get("stale"):
+                state = build_command_activity_timeout_state(snapshot, job_id)
+                state.setdefault("summary", build_idle_test_state()["summary"])
+                return state
+
+            test_state = get_test_state_from_snapshot(snapshot)
             if test_state.get("id") == job_id:
                 last_state = test_state
                 if is_terminal_test_state(test_state):
@@ -360,7 +437,11 @@ def wait_for_scene_open(args: argparse.Namespace, job_id: str, timeout_seconds: 
 
     while time.monotonic() < deadline:
         try:
-            scene_open_state = get_scene_open_state_from_snapshot(fetch_status_snapshot(args, allow_file_fallback=True))
+            snapshot = fetch_status_snapshot(args, allow_file_fallback=True)
+            if get_command_activity(snapshot).get("stale"):
+                return build_command_activity_timeout_state(snapshot, job_id)
+
+            scene_open_state = get_scene_open_state_from_snapshot(snapshot)
             if scene_open_state.get("id") == job_id:
                 last_state = scene_open_state
                 if is_terminal_scene_open_state(scene_open_state, job_id):
@@ -399,6 +480,9 @@ def find_latest_script(client: UnityClient) -> Optional[str]:
 
 def is_transient_command_error(exc: ClientError) -> bool:
     message = str(exc).lower()
+    if "command_pending_timeout" in message or "activestale=true" in message:
+        return False
+
     return any(
         marker in message
         for marker in (
@@ -445,7 +529,10 @@ def build_play_mode_state_from_snapshot(snapshot: Dict[str, Any]) -> Dict[str, A
     state.setdefault("reloading", snapshot.get("reloading"))
     state.setdefault("busy", snapshot.get("busy"))
     state.setdefault("busyCommand", snapshot.get("busyCommand"))
+    state.setdefault("busyStale", snapshot.get("busyStale"))
+    state.setdefault("busyDurationMs", snapshot.get("busyDurationMs"))
     state.setdefault("queuedCommands", snapshot.get("queuedCommands"))
+    state.setdefault("queuedDurationMs", snapshot.get("queuedDurationMs"))
     state.setdefault("message", snapshot.get("message"))
     state.setdefault("lastUpdatedUtc", snapshot.get("lastUpdatedUtc"))
 
@@ -454,7 +541,10 @@ def build_play_mode_state_from_snapshot(snapshot: Dict[str, Any]) -> Dict[str, A
         state.setdefault("connected", connection.get("connected"))
         state.setdefault("busy", connection.get("busy"))
         state.setdefault("busyCommand", connection.get("busyCommand"))
+        state.setdefault("busyStale", connection.get("busyStale"))
+        state.setdefault("busyDurationMs", connection.get("busyDurationMs"))
         state.setdefault("queuedCommands", connection.get("queuedCommands"))
+        state.setdefault("queuedDurationMs", connection.get("queuedDurationMs"))
         state.setdefault("lastError", connection.get("lastError"))
 
     active_scene = snapshot.get("activeScene")
@@ -531,6 +621,9 @@ def wait_for_play_mode_state(
         try:
             state = read_play_mode_state(args, client)
             last_state = state
+            if get_command_activity(state).get("stale"):
+                return build_command_activity_timeout_state(state, transition_id)
+
             if is_terminal_play_mode_transition_state(state, desired_is_playing, transition_id=transition_id):
                 return state
         except (DiscoveryError, ClientError) as exc:
@@ -1206,11 +1299,32 @@ def wait_for_ready(args: argparse.Namespace, timeout_ms: int) -> Dict[str, Any]:
     deadline = time.monotonic() + max(timeout_ms, 1000) / 1000.0
     last_snapshot: Dict[str, Any] = {}
     last_error: Optional[str] = None
+    activity_key: Optional[str] = None
+    activity_observed_at: Optional[float] = None
 
     while time.monotonic() < deadline:
         try:
             snapshot = fetch_status_snapshot(args, allow_file_fallback=True)
             last_snapshot = snapshot
+            activity = get_command_activity(snapshot)
+            if activity.get("busy"):
+                current_key = f"{activity.get('command') or 'queued'}:{activity.get('queuedCommands')}"
+                now = time.monotonic()
+                if current_key != activity_key:
+                    activity_key = current_key
+                    activity_observed_at = now
+
+                observed_seconds = now - (activity_observed_at or now)
+                if activity.get("stale") or (
+                    activity.get("command") and observed_seconds >= COMMAND_BUSY_FAIL_FAST_SECONDS
+                ) or (
+                    int(activity.get("queuedCommands") or 0) > 0 and observed_seconds >= COMMAND_PENDING_FAIL_FAST_SECONDS
+                ):
+                    return build_command_activity_timeout_state(snapshot)
+            else:
+                activity_key = None
+                activity_observed_at = None
+
             if is_ready_snapshot(snapshot):
                 snapshot["ready"] = True
                 return snapshot
