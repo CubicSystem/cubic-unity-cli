@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -48,12 +49,13 @@ namespace Cubix.UnityCli
             yield return new CommandDefinition
             {
                 Action = "component-get",
-                Description = "Read component members from a GameObject.",
+                Description = "Read component metadata or explicit members from a GameObject.",
                 Tags = CommandMetadata.Tags(CommandTags.Object, CommandTags.Scene),
                 Parameters = CommandMetadata.Parameters(
                     CommandMetadata.Parameter("target", "string", true, "Target object path or name."),
                     CommandMetadata.Parameter("component", "string", true, "Component type name."),
-                    CommandMetadata.Parameter("member", "string", false, "Optional member name to narrow the result."),
+                    CommandMetadata.Parameter("member", "string", false, "Optional member name to read explicitly."),
+                    CommandMetadata.Parameter("readAllMembers", "boolean", false, "Opt-in broad reflection read of all public members.", false),
                     CommandMetadata.Parameter("includeInactive", "boolean", false, "Allow inactive objects.", false))
             };
             yield return new CommandDefinition
@@ -234,11 +236,18 @@ namespace Cubix.UnityCli
             }
 
             var member = parameters.Value<string>("member");
+            var readAllMembers = parameters.Value<bool?>("readAllMembers") ?? false;
+            var includeValues = readAllMembers || !string.IsNullOrWhiteSpace(member);
             return new CommandSuccessResponse("Component values.", new
             {
                 gameObject = ObjectSnapshotter.SnapshotGameObject(gameObject, false, 0, 0),
-                component = component.GetType().Name,
-                values = ObjectSnapshotter.SnapshotMembers(component, member)
+                component = ObjectSnapshotter.SnapshotComponent(component, false),
+                values = includeValues
+                    ? (readAllMembers
+                        ? ObjectSnapshotter.SnapshotMembers(component)
+                        : ObjectSnapshotter.SnapshotMembers(component, member))
+                    : null,
+                hint = includeValues ? null : "Specify 'member' or set 'readAllMembers' to read component values safely."
             });
         }
 
@@ -269,10 +278,15 @@ namespace Cubix.UnityCli
 
             EditorUtility.SetDirty(component);
             MarkDirty(gameObject);
+            var changedMembers = values != null ? values.Properties().Select(property => property.Name) : null;
             return new CommandSuccessResponse("Component updated.", new
             {
                 gameObject = ObjectSnapshotter.SnapshotGameObject(gameObject, false, 0, 0),
-                component = ObjectSnapshotter.SnapshotComponent(component)
+                component = ObjectSnapshotter.SnapshotComponent(
+                    component,
+                    includeValues: values != null || !string.IsNullOrWhiteSpace(parameters.Value<string>("member")),
+                    memberName: parameters.Value<string>("member"),
+                    memberNames: changedMembers)
             });
         }
     }

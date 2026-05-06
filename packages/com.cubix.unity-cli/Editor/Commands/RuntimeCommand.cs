@@ -24,7 +24,9 @@ namespace Cubix.UnityCli
                 Parameters = CommandMetadata.Parameters(
                     CommandMetadata.Parameter("target", "string", true, "Target runtime object."),
                     CommandMetadata.Parameter("component", "string", false, "Optional component type name."),
-                    CommandMetadata.Parameter("includeComponents", "boolean", false, "Include component snapshots for the GameObject result.", false),
+                    CommandMetadata.Parameter("member", "string", false, "Optional member name to read explicitly when inspecting a component."),
+                    CommandMetadata.Parameter("readAllMembers", "boolean", false, "Opt-in broad reflection read of all public component members.", false),
+                    CommandMetadata.Parameter("includeComponents", "boolean", false, "Include component metadata for the GameObject result.", false),
                     CommandMetadata.Parameter("maxDepth", "integer", false, "Maximum child depth to include in the GameObject result.", 1))
             };
             yield return new CommandDefinition
@@ -113,10 +115,19 @@ namespace Cubix.UnityCli
                 return error;
             }
 
+            var member = parameters.Value<string>("member");
+            var readAllMembers = parameters.Value<bool?>("readAllMembers") ?? false;
+            var includeValues = readAllMembers || !string.IsNullOrWhiteSpace(member);
             return new CommandSuccessResponse("Runtime component.", new
             {
                 gameObject = ObjectSnapshotter.SnapshotGameObject(gameObject, false, 0, 0),
-                component = ObjectSnapshotter.SnapshotComponent(component)
+                component = ObjectSnapshotter.SnapshotComponent(component, false),
+                values = includeValues
+                    ? (readAllMembers
+                        ? ObjectSnapshotter.SnapshotMembers(component)
+                        : ObjectSnapshotter.SnapshotMembers(component, member))
+                    : null,
+                hint = includeValues ? null : "Specify 'member' or set 'readAllMembers' to read component values safely."
             });
         }
 

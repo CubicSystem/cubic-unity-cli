@@ -22,7 +22,7 @@ namespace Cubix.UnityCli
                 Description = "Read the active scene hierarchy.",
                 Tags = CommandMetadata.Tags(CommandTags.Core, CommandTags.Scene),
                 Parameters = CommandMetadata.Parameters(
-                    CommandMetadata.Parameter("includeComponents", "boolean", false, "Include component snapshots for each object.", false),
+                    CommandMetadata.Parameter("includeComponents", "boolean", false, "Include component metadata for each object.", false),
                     CommandMetadata.Parameter("maxDepth", "integer", false, "Maximum hierarchy depth to include.", 6))
             };
             yield return new CommandDefinition
@@ -49,7 +49,7 @@ namespace Cubix.UnityCli
                     CommandMetadata.Parameter("tag", "string", false, "Unity tag filter."),
                     CommandMetadata.Parameter("limit", "integer", false, "Maximum number of matches to return.", DefaultFindLimit),
                     CommandMetadata.Parameter("includeInactive", "boolean", false, "Include inactive objects.", false),
-                    CommandMetadata.Parameter("includeComponents", "boolean", false, "Include component snapshots.", false))
+                    CommandMetadata.Parameter("includeComponents", "boolean", false, "Include component metadata.", false))
             };
             yield return new CommandDefinition
             {

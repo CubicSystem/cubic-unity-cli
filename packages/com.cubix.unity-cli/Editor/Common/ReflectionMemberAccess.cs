@@ -18,7 +18,8 @@ namespace Cubix.UnityCli
                     new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                     {
                         "localToWorldMatrix",
-                        "worldToLocalMatrix"
+                        "worldToLocalMatrix",
+                        "transformHandle"
                     }
                 }
             };

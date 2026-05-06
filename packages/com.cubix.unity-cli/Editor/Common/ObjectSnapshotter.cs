@@ -8,6 +8,9 @@ namespace Cubix.UnityCli
 {
     internal static class ObjectSnapshotter
     {
+        private const int MaxSnapshotMembers = 32;
+        private const double SnapshotMemberBudgetMilliseconds = 50.0d;
+
         public static object SnapshotScene(Scene scene, bool includeComponents = false, int maxDepth = 6)
         {
             var roots = new List<object>();
@@ -82,23 +85,34 @@ namespace Cubix.UnityCli
 
         public static object SnapshotComponent(Component component)
         {
+            return SnapshotComponent(component, includeValues: false);
+        }
+
+        public static object SnapshotComponent(Component component, bool includeValues, string memberName = null, IEnumerable<string> memberNames = null)
+        {
             if (component == null)
             {
                 return null;
             }
 
             var enabled = component is Behaviour behaviour ? (bool?)behaviour.enabled : null;
-            return new
+            var snapshot = new Dictionary<string, object>
             {
-                type = component.GetType().Name,
-                fullType = component.GetType().FullName,
-                instanceId = component.GetInstanceID(),
-                enabled,
-                values = SnapshotMembers(component)
+                ["type"] = component.GetType().Name,
+                ["fullType"] = component.GetType().FullName,
+                ["instanceId"] = component.GetInstanceID(),
+                ["enabled"] = enabled
             };
+
+            if (includeValues)
+            {
+                snapshot["values"] = SnapshotMembers(component, memberName, memberNames);
+            }
+
+            return snapshot;
         }
 
-        public static object SnapshotMembers(object instance, string memberName = null)
+        public static object SnapshotMembers(object instance, string memberName = null, IEnumerable<string> memberNames = null)
         {
             if (instance == null)
             {
@@ -107,25 +121,31 @@ namespace Cubix.UnityCli
 
             if (!string.IsNullOrWhiteSpace(memberName))
             {
-                object single;
-                try
-                {
-                    single = ReflectionMemberAccess.ReadMember(instance, memberName);
-                }
-                catch
-                {
-                    single = "<unavailable>";
-                }
+                return SnapshotSelectedMembers(instance, new[] { memberName });
+            }
 
-                return new Dictionary<string, object>
-                {
-                    { memberName, ValueSerializer.Serialize(single) }
-                };
+            if (memberNames != null)
+            {
+                return SnapshotSelectedMembers(instance, memberNames);
             }
 
             var output = new Dictionary<string, object>();
+            var startedAtUtc = System.DateTime.UtcNow;
+            var count = 0;
             foreach (var member in ReflectionMemberAccess.ListMembers(instance.GetType()))
             {
+                if (count >= MaxSnapshotMembers)
+                {
+                    output["..."] = "...truncated...";
+                    break;
+                }
+
+                if ((System.DateTime.UtcNow - startedAtUtc).TotalMilliseconds >= SnapshotMemberBudgetMilliseconds)
+                {
+                    output["..."] = "<time-budget-exceeded>";
+                    break;
+                }
+
                 try
                 {
                     var value = ReflectionMemberAccess.ReadMember(instance, member);
@@ -134,6 +154,33 @@ namespace Cubix.UnityCli
                 catch
                 {
                     output[member] = "<unavailable>";
+                }
+
+                count++;
+            }
+
+            return output;
+        }
+
+        private static Dictionary<string, object> SnapshotSelectedMembers(object instance, IEnumerable<string> memberNames)
+        {
+            var output = new Dictionary<string, object>();
+            foreach (var rawMemberName in memberNames)
+            {
+                if (string.IsNullOrWhiteSpace(rawMemberName))
+                {
+                    continue;
+                }
+
+                var memberName = rawMemberName.Trim();
+                try
+                {
+                    var value = ReflectionMemberAccess.ReadMember(instance, memberName);
+                    output[memberName] = ValueSerializer.Serialize(value);
+                }
+                catch
+                {
+                    output[memberName] = "<unavailable>";
                 }
             }
 
