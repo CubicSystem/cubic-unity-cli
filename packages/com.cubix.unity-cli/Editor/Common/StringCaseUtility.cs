@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     internal static class StringCaseUtility
     {

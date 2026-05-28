@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [CubixCliCommand(Group = "commands", Name = "commands", Description = "Discover, describe, preflight, and batch Cubix commands.")]
     internal sealed class CommandsCommand : ICubixCliCommandHandler

@@ -5,7 +5,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [CubixCliCommand(Group = "object", Name = "object", Description = "Create and mutate scene objects and components.")]
     internal sealed class ObjectCommand : ICubixCliCommandHandler

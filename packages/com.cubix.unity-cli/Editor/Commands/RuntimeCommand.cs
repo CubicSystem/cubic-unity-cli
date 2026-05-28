@@ -3,7 +3,7 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [CubixCliCommand(Group = "runtime", Name = "runtime", Description = "Inspect or mutate runtime state while playing.")]
     internal sealed class RuntimeCommand : ICubixCliCommandHandler, ICubixCliPreflightHandler

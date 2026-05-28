@@ -10,7 +10,7 @@ using UnityEditor;
 using UnityEditor.TestTools.TestRunner.Api;
 using UnityEngine;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [InitializeOnLoad]
     internal static class TestRunController

@@ -1,6 +1,6 @@
 {
-  "name": "Cubix.UnityCli.Editor",
-  "rootNamespace": "Cubix.UnityCli",
+  "name": "CubicEngine.UnityCli.Editor",
+  "rootNamespace": "CubicEngine.UnityCli",
   "references": [
     "UnityEditor.TestRunner"
   ],

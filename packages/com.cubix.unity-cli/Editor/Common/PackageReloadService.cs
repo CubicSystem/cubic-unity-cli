@@ -2,14 +2,14 @@ using UnityEditor;
 using UnityEditor.Compilation;
 using UnityEditor.PackageManager;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [InitializeOnLoad]
     internal static class PackageReloadService
     {
-        private const string PendingKey = "Cubix.UnityCli.PackageReload.Pending";
-        private const string StatusKey = "Cubix.UnityCli.PackageReload.Status";
-        private const string ResolveRequestedKey = "Cubix.UnityCli.PackageReload.ResolveRequested";
+        private const string PendingKey = "CubicEngine.UnityCli.PackageReload.Pending";
+        private const string StatusKey = "CubicEngine.UnityCli.PackageReload.Status";
+        private const string ResolveRequestedKey = "CubicEngine.UnityCli.PackageReload.ResolveRequested";
         private const double RetryIntervalSeconds = 5.0d;
 
         private static double _nextAttemptAt;

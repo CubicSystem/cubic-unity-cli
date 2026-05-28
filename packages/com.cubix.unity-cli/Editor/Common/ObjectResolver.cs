@@ -7,7 +7,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     internal static class ObjectResolver
     {

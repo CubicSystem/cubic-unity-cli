@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [CubixCliCommand(Group = "test", Name = "test", Description = "Run Unity Test Runner suites and read their status.")]
     internal sealed class TestCommand : ICubixCliCommandHandler

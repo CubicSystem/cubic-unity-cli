@@ -6,7 +6,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [InitializeOnLoad]
     internal static class SceneOpenController

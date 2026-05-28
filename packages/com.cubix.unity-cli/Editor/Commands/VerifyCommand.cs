@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [CubixCliCommand(Group = "verify", Name = "verify", Description = "Run Unity script verification workflow.")]
     internal sealed class VerifyCommand : ICubixCliCommandHandler

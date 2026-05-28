@@ -2,7 +2,7 @@ using System;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     internal static class ReflectionValueConverter
     {

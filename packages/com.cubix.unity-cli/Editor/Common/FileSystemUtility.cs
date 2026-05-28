@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     internal static class FileSystemUtility
     {

@@ -5,7 +5,7 @@ using UnityEditor;
 using UnityEditor.Compilation;
 using UnityEngine.SceneManagement;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [CubixCliCommand(Group = "editor", Name = "editor", Description = "Control Unity editor state, play mode, menus, and refresh flows.")]
     internal sealed class EditorCommand : ICubixCliCommandHandler, ICubixCliPreflightHandler

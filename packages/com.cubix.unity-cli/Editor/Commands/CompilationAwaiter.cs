@@ -7,7 +7,7 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.Compilation;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [InitializeOnLoad]
     internal static class CompilationAwaiter

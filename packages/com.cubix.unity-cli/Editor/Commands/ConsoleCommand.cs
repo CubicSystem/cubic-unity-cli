@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [CubixCliCommand(Group = "console", Name = "console", Description = "Read or clear Unity console entries.")]
     internal sealed class ConsoleCommand : ICubixCliCommandHandler

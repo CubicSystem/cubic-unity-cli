@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     internal interface ICubixCliCommandHandler
     {

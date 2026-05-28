@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     internal sealed class ProcessCommand
     {

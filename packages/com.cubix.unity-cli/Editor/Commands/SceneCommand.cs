@@ -5,7 +5,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [CubixCliCommand(Group = "scene", Name = "scene", Description = "Inspect loaded scene structure.")]
     internal sealed class SceneCommand : ICubixCliCommandHandler, ICubixCliPreflightHandler

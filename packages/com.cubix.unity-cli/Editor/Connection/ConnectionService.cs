@@ -1,6 +1,6 @@
 using UnityEditor;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     internal sealed class ConnectionSnapshot
     {
@@ -28,9 +28,9 @@ namespace Cubix.UnityCli
     [InitializeOnLoad]
     internal static class ConnectionService
     {
-        private const string AutoConnectEditorPrefKey = "Cubix.UnityCli.AutoConnectOnLoad";
-        private const string ReconnectOnReloadSessionKey = "Cubix.UnityCli.ReconnectOnReload";
-        private const string ReloadingSessionKey = "Cubix.UnityCli.Reloading";
+        private const string AutoConnectEditorPrefKey = "CubicEngine.UnityCli.AutoConnectOnLoad";
+        private const string ReconnectOnReloadSessionKey = "CubicEngine.UnityCli.ReconnectOnReload";
+        private const string ReloadingSessionKey = "CubicEngine.UnityCli.Reloading";
         private const double ReconnectRetryIntervalSeconds = 1.0d;
 
         private static bool _autoConnectPending;

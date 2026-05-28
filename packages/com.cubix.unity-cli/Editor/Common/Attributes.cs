@@ -1,6 +1,6 @@
 using System;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [AttributeUsage(AttributeTargets.Class, Inherited = false)]
     internal sealed class CubixCliCommandAttribute : Attribute

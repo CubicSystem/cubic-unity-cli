@@ -2,7 +2,7 @@ using System.Text;
 using UnityEditor;
 using UnityEngine;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     internal sealed class UnityCliSetupWindow : EditorWindow
     {

@@ -5,7 +5,7 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine.SceneManagement;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [InitializeOnLoad]
     internal static class PlayModeTransitionController

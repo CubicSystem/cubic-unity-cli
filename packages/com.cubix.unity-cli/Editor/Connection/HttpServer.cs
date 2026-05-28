@@ -9,7 +9,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     internal sealed class CommandActivitySnapshot
     {
@@ -27,7 +27,7 @@ namespace Cubix.UnityCli
 
     internal static class HttpServer
     {
-        private const string PortEditorPrefKey = "Cubix.UnityCli.Port";
+        private const string PortEditorPrefKey = "CubicEngine.UnityCli.Port";
         private const int QueuePickupTimeoutMs = 5000;
         private const int BusyStaleAfterMs = 30000;
 

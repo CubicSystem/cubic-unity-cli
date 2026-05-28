@@ -8,7 +8,7 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     public sealed class ExecContext
     {
@@ -164,7 +164,7 @@ namespace Cubix.UnityCli
                 "using System.Linq;",
                 "using UnityEditor;",
                 "using UnityEngine;",
-                "using Cubix.UnityCli;"
+                "using CubicEngine.UnityCli;"
             };
 
             if (usings != null)

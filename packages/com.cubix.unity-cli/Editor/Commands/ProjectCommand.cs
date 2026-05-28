@@ -3,7 +3,7 @@ using System.Linq;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [CubixCliCommand(Group = "project", Name = "project", Description = "Project-wide asset maintenance commands.")]
     internal sealed class ProjectCommand : ICubixCliCommandHandler, ICubixCliPreflightHandler

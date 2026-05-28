@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     internal static class ToolDiscovery
     {

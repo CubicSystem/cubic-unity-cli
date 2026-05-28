@@ -4,7 +4,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [CubixCliCommand(Group = "prefab", Name = "prefab", Description = "Instantiate and save prefab assets.")]
     internal sealed class PrefabCommand : ICubixCliCommandHandler, ICubixCliPreflightHandler

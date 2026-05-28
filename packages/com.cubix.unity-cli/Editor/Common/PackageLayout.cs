@@ -3,7 +3,7 @@ using System.Reflection;
 using Newtonsoft.Json.Linq;
 using UnityEditor.PackageManager;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     internal static class PackageLayout
     {

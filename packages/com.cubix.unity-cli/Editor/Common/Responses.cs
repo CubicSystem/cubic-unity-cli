@@ -1,6 +1,6 @@
 using System;
 
-namespace Cubix.UnityCli
+namespace CubicEngine.UnityCli
 {
     [Serializable]
     internal sealed class CommandSuccessResponse
