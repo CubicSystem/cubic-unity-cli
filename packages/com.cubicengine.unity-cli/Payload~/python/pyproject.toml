@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cubic-unity-cli"
+version = "0.2.19"
+description = "CLI for driving Cubic Unity editor workflows."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+cubic-cli = "cubic_cli.main:entrypoint"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

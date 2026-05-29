@@ -1,4 +1,4 @@
-# Cubix Unity CLI
+# Cubic Unity CLI
 
 Monorepo for the `com.cubicengine.unity-cli` Unity package and its packaged payloads.
 The Unity package owns the local HTTP connector, the setup window, the Python CLI
@@ -6,29 +6,29 @@ payload, and the installable Codex and Claude Code skills.
 
 ## Layout
 
-- `packages/com.cubix.unity-cli`
+- `packages/com.cubicengine.unity-cli`
   UPM package. This is the product you import into Unity.
-- `packages/com.cubix.unity-cli/Editor`
+- `packages/com.cubicengine.unity-cli/Editor`
   Connection service, command handlers, setup UI, and installer services.
-- `packages/com.cubix.unity-cli/Payload~/python`
-  Python package payload staged and installed as `cubix-cli` via `pipx`.
-- `packages/com.cubix.unity-cli/Payload~/skills`
+- `packages/com.cubicengine.unity-cli/Payload~/python`
+  Python package payload staged and installed as `cubic-cli` via `pipx`.
+- `packages/com.cubicengine.unity-cli/Payload~/skills`
   Self-contained skill payloads for Codex and Claude Code.
 
 ## Install Flow
 
 1. Add `com.cubicengine.unity-cli` to the Unity project's `Packages/manifest.json`.
 2. Open the Unity project.
-3. Open `Tools/Cubix/Unity CLI`.
+3. Open `Tools/CubicEngine/UnityCli`.
 4. Confirm the connection status or use `Connect` / `Reconnect`.
-5. Use `Install CLI` to bootstrap `pip`, `pipx`, and the `cubix-cli` command if Python 3.10+ is available.
+5. Use `Install CLI` to bootstrap `pip`, `pipx`, and the `cubic-cli` command if Python 3.10+ is available.
 6. Use `Install Codex Skills`, `Install Claude Code Skills`, or `Install All Skills`.
 
 The package auto-connects on editor load by default. You can disable that from the setup window.
 
 ## Runtime Surface
 
-The editor connector serves loopback HTTP on `127.0.0.1` and keeps discovery files under `%USERPROFILE%\.cubix-cli`.
+The editor connector serves loopback HTTP on `127.0.0.1` and keeps discovery files under `%USERPROFILE%\.cubic-cli`.
 
 - `GET /health`
 - `GET /status`
@@ -59,7 +59,7 @@ The command groups exposed by the connector and CLI are:
 The default edit loop is:
 
 1. Modify, create, or delete a Unity `.cs` file.
-2. Run `cubix-cli verify <path>` for a known changed file, or `cubix-cli verify --all` after create/delete operations.
+2. Run `cubic-cli verify <path>` for a known changed file, or `cubic-cli verify --all` after create/delete operations.
 3. Wait for compilation to settle.
 4. Read compiler errors.
 5. Continue scene, prefab, or runtime work only if verify succeeds.
@@ -68,11 +68,11 @@ The default edit loop is:
 
 ## Discovery And Safety
 
-- `cubix-cli status --wait-ready` waits for Unity to settle after compilation or refresh work.
-- `cubix-cli list` and `cubix-cli help <group.action>` expose the live Unity command catalog.
-- `cubix-cli call` allows raw command passthrough for newly added Unity commands without changing the Python parser.
-- `cubix-cli preflight` runs command-specific safety checks for risky operations.
-- `cubix-cli batch --file ...` executes multiple commands sequentially from one JSON payload.
+- `cubic-cli status --wait-ready` waits for Unity to settle after compilation or refresh work.
+- `cubic-cli list` and `cubic-cli help <group.action>` expose the live Unity command catalog.
+- `cubic-cli call` allows raw command passthrough for newly added Unity commands without changing the Python parser.
+- `cubic-cli preflight` runs command-specific safety checks for risky operations.
+- `cubic-cli batch --file ...` executes multiple commands sequentially from one JSON payload.
 
 ## Skill Install Targets
 
