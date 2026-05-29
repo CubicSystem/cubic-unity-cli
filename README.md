@@ -1,6 +1,6 @@
 # Cubix Unity CLI
 
-Monorepo for the `com.cubix.unity-cli` Unity package and its packaged payloads.
+Monorepo for the `com.cubicengine.unity-cli` Unity package and its packaged payloads.
 The Unity package owns the local HTTP connector, the setup window, the Python CLI
 payload, and the installable Codex and Claude Code skills.
 
@@ -17,7 +17,7 @@ payload, and the installable Codex and Claude Code skills.
 
 ## Install Flow
 
-1. Add `com.cubix.unity-cli` to the Unity project's `Packages/manifest.json`.
+1. Add `com.cubicengine.unity-cli` to the Unity project's `Packages/manifest.json`.
 2. Open the Unity project.
 3. Open `Tools/Cubix/Unity CLI`.
 4. Confirm the connection status or use `Connect` / `Reconnect`.

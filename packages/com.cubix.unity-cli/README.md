@@ -1,6 +1,6 @@
 # Cubix Unity CLI
 
-`com.cubix.unity-cli` is a Unity editor package that hosts the Cubix Unity CLI connector
+`com.cubicengine.unity-cli` is a Unity editor package that hosts the Cubix Unity CLI connector
 and exposes a setup window for connection, CLI installation, and skill installation.
 
 ## What The Package Provides

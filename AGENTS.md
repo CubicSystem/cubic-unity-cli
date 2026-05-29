@@ -14,7 +14,7 @@ Do not edit installed user skills under home directories. Edit the payload sourc
 ## Product Rules
 
 - The product name is `Cubix Unity CLI`.
-- The UPM package id is `com.cubix.unity-cli`.
+- The UPM package id is `com.cubicengine.unity-cli`.
 - The shell command is `cubix-cli`.
 - The connector is an internal subsystem, not the product name.
 

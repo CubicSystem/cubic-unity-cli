@@ -7,7 +7,7 @@ namespace CubicEngine.UnityCli
 {
     internal static class PackageLayout
     {
-        private const string PackageName = "com.cubix.unity-cli";
+        private const string PackageName = "com.cubicengine.unity-cli";
         private const string PackageAssetPath = "Packages/" + PackageName;
 
         public static PackageInfo LoadedPackageInfo => PackageInfo.FindForAssembly(Assembly.GetExecutingAssembly());
