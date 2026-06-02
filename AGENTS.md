@@ -4,10 +4,10 @@
 
 This repository builds the Cubic Unity CLI package and its installable payloads.
 
-- Unity package: `packages/com.cubicengine.unity-cli`
+- Unity package: repository root
 - Setup window: `Tools/CubicEngine/UnityCli`
-- CLI payload source: `packages/com.cubicengine.unity-cli/Payload~/python`
-- Skill payload source: `packages/com.cubicengine.unity-cli/Payload~/skills`
+- CLI payload source: `Payload~/python`
+- Skill payload source: `Payload~/skills`
 
 Do not edit installed user skills under home directories. Edit the payload sources inside this repository instead.
 
@@ -21,7 +21,7 @@ Do not edit installed user skills under home directories. Edit the payload sourc
 ## Versioning Rules
 
 - Keep the UPM package version and the installable `cubic-cli` payload version aligned for each released package update.
-- If Unity package C# or editor UI code changes and that change must be delivered through Package Manager, bump both `packages/com.cubicengine.unity-cli/package.json` and the CLI payload version files.
+- If Unity package C# or editor UI code changes and that change must be delivered through Package Manager, bump both `package.json` and the CLI payload version files.
 - If the installable `cubic-cli` behavior changes and users must reinstall or update the CLI payload, bump the aligned package and CLI versions together.
 - Do not rely only on capability checks when a CLI reinstall is required for the fix to take effect. Use a version change so the setup window can clearly detect drift and prompt `Reinstall CLI`.
 - Skill payload versions remain independent. Do not bump skill payload versions unless the skill payload content changes.

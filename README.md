@@ -1,18 +1,32 @@
 # Cubic Unity CLI
 
-Monorepo for the `com.cubicengine.unity-cli` Unity package and its packaged payloads.
+Repository root package for the `com.cubicengine.unity-cli` Unity package and its packaged payloads.
 The Unity package owns the local HTTP connector, the setup window, the Python CLI
 payload, and the installable Codex and Claude Code skills.
 
+## Install
+
+Add this Git URL in Unity Package Manager:
+
+```text
+https://github.com/CubicSystem/cubic-unity-cli.git
+```
+
+Or add it directly to `Packages/manifest.json`:
+
+```json
+"com.cubicengine.unity-cli": "https://github.com/CubicSystem/cubic-unity-cli.git"
+```
+
 ## Layout
 
-- `packages/com.cubicengine.unity-cli`
-  UPM package. This is the product you import into Unity.
-- `packages/com.cubicengine.unity-cli/Editor`
+- `package.json`
+  UPM package manifest. The repository root is the package root.
+- `Editor`
   Connection service, command handlers, setup UI, and installer services.
-- `packages/com.cubicengine.unity-cli/Payload~/python`
+- `Payload~/python`
   Python package payload staged and installed as `cubic-cli` via `pipx`.
-- `packages/com.cubicengine.unity-cli/Payload~/skills`
+- `Payload~/skills`
   Self-contained skill payloads for Codex and Claude Code.
 
 ## Install Flow

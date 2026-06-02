@@ -105,5 +105,5 @@ __pycache__/
 venv/
 
 # Cubic Unity CLI Python packaging artifacts
-/packages/com.cubicengine.unity-cli/Payload~/python/build/
-/packages/com.cubicengine.unity-cli/Payload~/python/src/*.egg-info/
+/Payload~/python/build/
+/Payload~/python/src/*.egg-info/
