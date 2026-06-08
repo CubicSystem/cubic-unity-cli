@@ -40,6 +40,29 @@ Or add it directly to `Packages/manifest.json`:
 
 The package auto-connects on editor load by default. You can disable that from the setup window.
 
+## Setup Window
+
+![Cubic Unity CLI editor](https://raw.githubusercontent.com/CubicSystem/cubic-unity-cli/main/Documentation/Images/cubic-unity-cli-editor.png)
+
+`Tools/CubicEngine/UnityCli` opens the editor window used to operate the package inside Unity.
+It is organized around package loading, connector state, CLI installation, and skill installation.
+
+- `Loaded Package`
+  Shows the loaded package version and resolved package root. Use `Reload Package Scripts` when
+  Unity has stale package scripts or the loaded package version does not match the resolved package.
+- `Connection`
+  Shows whether the Unity connector is connected, the loopback port and URL, the current project
+  hash, registered command count, last error, and `Auto Connect On Load`. Use `Connect` and
+  `Disconnect` to control the local connector.
+- `CLI`
+  Diagnoses Python, `pip`, `pipx`, the expected CLI version, installed `cubic-cli` package version,
+  command version, and top-level command test. This section provides install, update, repair,
+  uninstall, and diagnostics actions for the local CLI.
+- `Skills`
+  Detects Codex and Claude Code, shows each app path and skill install target, and reports whether
+  `cubic-unity-cli-verify` and `cubic-unity-cli-edit-loop` are installed. Use the section buttons to
+  install, repair, or uninstall agent skills.
+
 ## Runtime Surface
 
 The editor connector serves loopback HTTP on `127.0.0.1` and keeps discovery files under `%USERPROFILE%\.cubic-cli`.
