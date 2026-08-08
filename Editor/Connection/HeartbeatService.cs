@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Text;
-using System.Threading;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -71,7 +70,9 @@ namespace CubicEngine.UnityCli
             }
 
             ApplyCommandActivity(snapshot, activity);
-            snapshot["lastUpdatedUtc"] = DateTime.UtcNow.ToString("o");
+            var updatedAtUtc = DateTime.UtcNow.ToString("o");
+            snapshot["updatedAtUtc"] = updatedAtUtc;
+            snapshot["lastUpdatedUtc"] = updatedAtUtc;
             WriteSnapshotFiles(HttpServer.AdvertisedPort, HttpServer.IsRunning ? HttpServer.Url : HttpServer.AdvertisedUrl, snapshot);
         }
 
@@ -126,6 +127,7 @@ namespace CubicEngine.UnityCli
                         !TestRunController.HasPendingRun() &&
                         !PlayModeTransitionController.HasPendingTransition();
             var message = BuildStatusMessage(connected, reloading, connection, SceneOpenController.GetPendingMessage());
+            var updatedAtUtc = DateTime.UtcNow.ToString("o");
             return new
             {
                 projectName = ConnectorPaths.ProjectName,
@@ -160,7 +162,8 @@ namespace CubicEngine.UnityCli
                 commandCount = commands.Count,
                 commands,
                 connection,
-                lastUpdatedUtc = DateTime.UtcNow.ToString("o")
+                updatedAtUtc,
+                lastUpdatedUtc = updatedAtUtc
             };
         }
 
@@ -189,29 +192,7 @@ namespace CubicEngine.UnityCli
 
         private static bool WriteJson(string path, string json)
         {
-            for (var attempt = 0; attempt < 5; attempt++)
-            {
-                try
-                {
-                    using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
-                    using (var writer = new StreamWriter(stream, Utf8NoBom))
-                    {
-                        writer.Write(json);
-                    }
-
-                    return true;
-                }
-                catch (IOException) when (attempt < 4)
-                {
-                    Thread.Sleep(15 * (attempt + 1));
-                }
-                catch (IOException)
-                {
-                    return false;
-                }
-            }
-
-            return false;
+            return AtomicFileWriter.TryWriteAllText(path, json, Utf8NoBom);
         }
 
         private static object BuildActiveSceneSnapshot()
@@ -264,32 +245,16 @@ namespace CubicEngine.UnityCli
                 port,
                 url,
                 pid = System.Diagnostics.Process.GetCurrentProcess().Id,
-                statusFile = ConnectorPaths.StatusFilePath()
+                statusFile = ConnectorPaths.StatusFilePath(),
+                updatedAtUtc = DateTime.UtcNow.ToString("o")
             };
-            WriteInstanceSnapshotIfNeeded(instancePayload);
+            WriteInstanceSnapshot(instancePayload);
         }
 
-        private static void WriteInstanceSnapshotIfNeeded(object payload)
+        private static void WriteInstanceSnapshot(object payload)
         {
             var path = ConnectorPaths.InstanceFilePath;
             var json = JsonConvert.SerializeObject(payload, Formatting.Indented);
-
-            try
-            {
-                if (File.Exists(path))
-                {
-                    var existing = File.ReadAllText(path);
-                    if (string.Equals(existing, json, StringComparison.Ordinal))
-                    {
-                        return;
-                    }
-                }
-            }
-            catch (IOException)
-            {
-                return;
-            }
-
             WriteJson(path, json);
         }
 

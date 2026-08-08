@@ -9,7 +9,14 @@ from typing import Any, Dict, Iterable, Optional
 
 from . import __version__
 from .client import ClientError, UnityClient
-from .discovery import ACTIVE_INSTANCE_MAX_AGE_SECONDS, DiscoveryError, InstanceInfo, resolve_instance
+from .discovery import (
+    ACTIVE_INSTANCE_MAX_AGE_SECONDS,
+    DiscoveryError,
+    InstanceInfo,
+    load_instance_status_with_mtime,
+    parse_status_updated_at,
+    resolve_instance,
+)
 
 
 DEFAULT_STATUS_TIMEOUT_MS = 180000
@@ -84,26 +91,11 @@ def build_client(args: argparse.Namespace) -> UnityClient:
 
 
 def load_recent_status_snapshot(instance: InstanceInfo) -> Optional[Dict[str, Any]]:
-    if not instance.status_file:
+    loaded = load_instance_status_with_mtime(instance)
+    if loaded is None:
         return None
-
-    path = Path(instance.status_file)
-    if not path.exists():
-        return None
-
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-    updated_at_utc = payload.get("lastUpdatedUtc")
-    if not isinstance(updated_at_utc, str):
-        return None
-
-    try:
-        updated_at = datetime.fromisoformat(updated_at_utc.replace("Z", "+00:00")).astimezone(timezone.utc)
-    except ValueError:
-        return None
+    payload, modified_at = loaded
+    updated_at = parse_status_updated_at(payload, modified_at)
 
     age_seconds = (datetime.now(timezone.utc) - updated_at).total_seconds()
     max_age_seconds = (
@@ -114,7 +106,7 @@ def load_recent_status_snapshot(instance: InstanceInfo) -> Optional[Dict[str, An
     if age_seconds > max_age_seconds:
         return None
 
-    return payload if isinstance(payload, dict) else None
+    return payload
 
 
 def fetch_status_snapshot(args: argparse.Namespace, allow_file_fallback: bool = False) -> Dict[str, Any]:

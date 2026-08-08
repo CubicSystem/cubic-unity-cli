@@ -13,22 +13,35 @@ namespace CubicEngine.UnityCli
         [Serializable]
         internal sealed class ConsoleEntry
         {
-            public string message;
-            public string stackTrace;
-            public string level;
-            public string source;
-            public string timestampUtc;
+            [JsonConstructor]
+            public ConsoleEntry(string message, string stackTrace, string level, string source, string timestampUtc)
+            {
+                this.message = message;
+                this.stackTrace = stackTrace;
+                this.level = level;
+                this.source = source;
+                this.timestampUtc = timestampUtc;
+            }
+
+            public readonly string message;
+            public readonly string stackTrace;
+            public readonly string level;
+            public readonly string source;
+            public readonly string timestampUtc;
         }
 
         private const int MaxEntries = 250;
         private const string SessionKey = "cubic_cli.console.entries";
 
+        private static readonly BoundedConcurrentQueue<ConsoleEntry> PendingEntries =
+            new BoundedConcurrentQueue<ConsoleEntry>(MaxEntries);
         private static readonly List<ConsoleEntry> Entries;
+        private static bool _subscribed;
 
         static ConsoleStore()
         {
             Entries = LoadEntries();
-            Application.logMessageReceivedThreaded += HandleLog;
+            Subscribe();
         }
 
         public static IReadOnlyList<ConsoleEntry> Read(string level = null, int limit = 50, string source = null)
@@ -72,33 +85,41 @@ namespace CubicEngine.UnityCli
 
         public static void Clear()
         {
+            PendingEntries.Clear();
             Entries.Clear();
             SaveEntries();
             CompilationAwaiter.ClearCompilerMessages();
             ClearEditorConsole();
         }
 
-        private static void HandleLog(string condition, string stackTrace, LogType type)
+        internal static void EnqueueLog(string condition, string stackTrace, LogType type)
         {
-            lock (Entries)
-            {
-                Entries.Add(new ConsoleEntry
-                {
-                    message = condition,
-                    stackTrace = stackTrace,
-                    level = NormalizeLevel(type),
-                    source = "editor",
-                    timestampUtc = DateTime.UtcNow.ToString("o")
-                });
-
-                while (Entries.Count > MaxEntries)
-                {
-                    Entries.RemoveAt(0);
-                }
-
-                SaveEntries();
-            }
+            PendingEntries.Enqueue(new ConsoleEntry(
+                condition,
+                stackTrace,
+                NormalizeLevel(type),
+                "editor",
+                DateTime.UtcNow.ToString("o")));
         }
+
+        internal static void DrainPendingLogs()
+        {
+            var pending = PendingEntries.Drain();
+            if (pending.Count == 0)
+            {
+                return;
+            }
+
+            Entries.AddRange(pending);
+            if (Entries.Count > MaxEntries)
+            {
+                Entries.RemoveRange(0, Entries.Count - MaxEntries);
+            }
+
+            SaveEntries();
+        }
+
+        internal static int PendingCount => PendingEntries.Count;
 
         private static List<ConsoleEntry> LoadEntries()
         {
@@ -121,6 +142,36 @@ namespace CubicEngine.UnityCli
         private static void SaveEntries()
         {
             SessionState.SetString(SessionKey, JsonConvert.SerializeObject(Entries));
+        }
+
+        private static void Subscribe()
+        {
+            if (_subscribed)
+            {
+                return;
+            }
+
+            Application.logMessageReceivedThreaded += EnqueueLog;
+            EditorApplication.update += DrainPendingLogs;
+            AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
+            EditorApplication.quitting += Shutdown;
+            _subscribed = true;
+        }
+
+        private static void Shutdown()
+        {
+            if (!_subscribed)
+            {
+                return;
+            }
+
+            Application.logMessageReceivedThreaded -= EnqueueLog;
+            EditorApplication.update -= DrainPendingLogs;
+            AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
+            EditorApplication.quitting -= Shutdown;
+            _subscribed = false;
+
+            DrainPendingLogs();
         }
 
         private static string NormalizeLevel(LogType type)

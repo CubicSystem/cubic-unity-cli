@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 class DiscoveryError(RuntimeError):
@@ -14,6 +15,12 @@ class DiscoveryError(RuntimeError):
 
 ACTIVE_INSTANCE_MAX_AGE_SECONDS = 15.0
 RELOADING_INSTANCE_MAX_AGE_SECONDS = 180.0
+STABLE_READ_RETRY_DELAYS_SECONDS = (0.005, 0.015, 0.03)
+EPOCH_UTC = datetime.fromtimestamp(0, tz=timezone.utc)
+
+
+class _UnstableFileReadError(OSError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -25,19 +32,74 @@ class InstanceInfo:
     url: str
     updated_at_utc: Optional[str]
     status_file: Optional[str]
+    file_modified_at_utc: Optional[datetime] = None
 
     @property
     def updated_at(self) -> datetime:
-        if not self.updated_at_utc:
-            return datetime.fromtimestamp(0, tz=timezone.utc)
-        try:
-            return datetime.fromisoformat(self.updated_at_utc.replace("Z", "+00:00")).astimezone(timezone.utc)
-        except ValueError:
-            return datetime.fromtimestamp(0, tz=timezone.utc)
+        parsed = parse_utc_timestamp(self.updated_at_utc)
+        if parsed is not None:
+            return parsed
+        if self.file_modified_at_utc is not None:
+            return self.file_modified_at_utc
+        return EPOCH_UTC
 
 
 def instances_root() -> Path:
     return Path.home() / ".cubic-cli" / "instances"
+
+
+def parse_utc_timestamp(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _file_signature(stat_result: os.stat_result) -> Tuple[int, int, int, int]:
+    return (
+        stat_result.st_dev,
+        stat_result.st_ino,
+        stat_result.st_size,
+        stat_result.st_mtime_ns,
+    )
+
+
+def _read_json_once(path: Path) -> Tuple[Dict[str, Any], datetime]:
+    with path.open("rb") as stream:
+        before = os.fstat(stream.fileno())
+        raw = stream.read()
+        after = os.fstat(stream.fileno())
+
+    if not raw:
+        raise _UnstableFileReadError("JSON file was empty while being read.")
+    if _file_signature(before) != _file_signature(after) or len(raw) != after.st_size:
+        raise _UnstableFileReadError("JSON file changed while being read.")
+
+    payload = json.loads(raw.decode("utf-8-sig"))
+    if not isinstance(payload, dict):
+        raise json.JSONDecodeError("Expected a JSON object.", raw.decode("utf-8-sig"), 0)
+
+    modified_at = datetime.fromtimestamp(after.st_mtime, tz=timezone.utc)
+    return payload, modified_at
+
+
+def read_stable_json(path: Path) -> Optional[Tuple[Dict[str, Any], datetime]]:
+    for attempt in range(len(STABLE_READ_RETRY_DELAYS_SECONDS) + 1):
+        try:
+            return _read_json_once(path)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            if attempt >= len(STABLE_READ_RETRY_DELAYS_SECONDS):
+                return None
+            time.sleep(STABLE_READ_RETRY_DELAYS_SECONDS[attempt])
+
+    return None
 
 
 def load_instances() -> List[InstanceInfo]:
@@ -47,10 +109,10 @@ def load_instances() -> List[InstanceInfo]:
 
     instances: List[InstanceInfo] = []
     for path in root.glob("*.json"):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        loaded = read_stable_json(path)
+        if loaded is None:
             continue
+        payload, modified_at = loaded
 
         port = payload.get("port")
         url = payload.get("url")
@@ -58,17 +120,21 @@ def load_instances() -> List[InstanceInfo]:
         if not port or not url or not project_path:
             continue
 
-        instances.append(
-            InstanceInfo(
-                project_name=payload.get("projectName") or Path(project_path).name,
-                project_path=str(Path(project_path).resolve()),
-                project_hash=payload.get("projectHash") or path.stem,
-                port=int(port),
-                url=str(url).rstrip("/"),
-                updated_at_utc=payload.get("updatedAtUtc"),
-                status_file=payload.get("statusFile"),
-            )
-        )
+        try:
+            resolved_port = int(port)
+        except (TypeError, ValueError):
+            continue
+
+        instances.append(InstanceInfo(
+            project_name=payload.get("projectName") or Path(project_path).name,
+            project_path=str(Path(project_path).resolve()),
+            project_hash=payload.get("projectHash") or path.stem,
+            port=resolved_port,
+            url=str(url).rstrip("/"),
+            updated_at_utc=payload.get("updatedAtUtc"),
+            status_file=payload.get("statusFile"),
+            file_modified_at_utc=modified_at,
+        ))
 
     return instances
 
@@ -103,19 +169,18 @@ def is_active_instance(instance: InstanceInfo, max_age_seconds: float = ACTIVE_I
 
 
 def load_instance_status(instance: InstanceInfo) -> Optional[Dict[str, Any]]:
+    loaded = load_instance_status_with_mtime(instance)
+    return loaded[0] if loaded is not None else None
+
+
+def load_instance_status_with_mtime(
+    instance: InstanceInfo,
+) -> Optional[Tuple[Dict[str, Any], datetime]]:
     if not instance.status_file:
         return None
 
     path = Path(instance.status_file)
-    if not path.exists():
-        return None
-
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-    return payload if isinstance(payload, dict) else None
+    return read_stable_json(path)
 
 
 def merge_instance_endpoint_from_status(instance: InstanceInfo) -> InstanceInfo:
@@ -136,25 +201,25 @@ def merge_instance_endpoint_from_status(instance: InstanceInfo) -> InstanceInfo:
     return replace(instance, port=resolved_port, url=url.rstrip("/"))
 
 
-def parse_status_updated_at(payload: Dict[str, Any]) -> datetime:
-    updated_at_utc = payload.get("lastUpdatedUtc") or payload.get("lastUpdate")
-    if not isinstance(updated_at_utc, str):
-        return datetime.fromtimestamp(0, tz=timezone.utc)
+def parse_status_updated_at(
+    payload: Dict[str, Any],
+    file_modified_at_utc: Optional[datetime] = None,
+) -> datetime:
+    for key in ("updatedAtUtc", "lastUpdatedUtc", "lastUpdate"):
+        parsed = parse_utc_timestamp(payload.get(key))
+        if parsed is not None:
+            return parsed
 
-    try:
-        return datetime.fromisoformat(updated_at_utc.replace("Z", "+00:00")).astimezone(timezone.utc)
-    except ValueError:
-        return datetime.fromtimestamp(0, tz=timezone.utc)
+    return file_modified_at_utc or EPOCH_UTC
 
 
 def get_instance_last_seen_at(instance: InstanceInfo) -> datetime:
-    payload = load_instance_status(instance)
-    if payload is not None:
-        updated_at = parse_status_updated_at(payload)
-        if updated_at.timestamp() > 0:
-            return updated_at
-
-    return instance.updated_at
+    last_seen_at = instance.updated_at
+    loaded = load_instance_status_with_mtime(instance)
+    if loaded is not None:
+        payload, modified_at = loaded
+        last_seen_at = max(last_seen_at, parse_status_updated_at(payload, modified_at))
+    return last_seen_at
 
 
 def is_reloading_status(payload: Dict[str, Any]) -> bool:
@@ -168,11 +233,16 @@ def is_reloading_instance(
     instance: InstanceInfo,
     max_age_seconds: float = RELOADING_INSTANCE_MAX_AGE_SECONDS,
 ) -> bool:
-    payload = load_instance_status(instance)
-    if payload is None or not is_reloading_status(payload):
+    loaded = load_instance_status_with_mtime(instance)
+    if loaded is None:
+        return False
+    payload, modified_at = loaded
+    if not is_reloading_status(payload):
         return False
 
-    age_seconds = (datetime.now(timezone.utc) - parse_status_updated_at(payload)).total_seconds()
+    age_seconds = (
+        datetime.now(timezone.utc) - parse_status_updated_at(payload, modified_at)
+    ).total_seconds()
     return age_seconds <= max(max_age_seconds, 0.0)
 
 

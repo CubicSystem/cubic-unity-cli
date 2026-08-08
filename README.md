@@ -103,6 +103,18 @@ The default edit loop is:
 
 `exec csharp` stays available, but the structured commands above are the preferred surface.
 
+## Package Tests
+
+Run the Python discovery tests from `Payload~/python` with:
+
+```text
+python -m unittest discover -s tests -v
+```
+
+The package also includes EditMode tests under `Tests/Editor`. In a Unity consumer that lists
+`com.cubicengine.unity-cli` under `testables`, run them through Unity Test Runner or
+`cubic-cli test run --platform EditMode --assembly CubicEngine.UnityCli.Editor.Tests`.
+
 ## Discovery And Safety
 
 - `cubic-cli status --wait-ready` waits for Unity to settle after compilation or refresh work.
