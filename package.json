@@ -1,6 +1,6 @@
 {
   "name": "com.cubicengine.unity-cli",
-  "version": "0.2.20",
+  "version": "0.2.21",
   "displayName": "Cubic Unity CLI",
   "description": "Unity package for Cubic Unity CLI connection, setup, and skill installation.",
   "unity": "2022.3",

@@ -57,7 +57,10 @@ namespace CubicEngine.UnityCli
             using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
             {
                 stream.Write(bytes, 0, bytes.Length);
-                stream.Flush(true);
+                // Closing the complete same-directory temporary file before the atomic
+                // replace keeps readers on either the old or new JSON document. Do not
+                // force a durable device flush on the Unity editor update thread.
+                stream.Flush();
             }
         }
 

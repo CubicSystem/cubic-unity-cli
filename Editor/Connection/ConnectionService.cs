@@ -81,8 +81,8 @@ namespace CubicEngine.UnityCli
             _nextReconnectAttemptAt = 0d;
             SessionState.SetBool(ReconnectOnReloadSessionKey, false);
             SessionState.SetBool(ReloadingSessionKey, false);
-            HeartbeatService.CleanupNow();
             HttpServer.Stop();
+            HeartbeatService.CleanupNow();
         }
 
         public static bool Reconnect()
